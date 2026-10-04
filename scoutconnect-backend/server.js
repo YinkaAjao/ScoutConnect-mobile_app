@@ -3,7 +3,7 @@ const express = require('express');
 const cors = require('cors');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
-const multer = require('multer'); // NEW: For file uploads
+const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
 require('dotenv').config();
@@ -16,19 +16,15 @@ app.use(express.json());
 
 const JWT_SECRET = process.env.JWT_SECRET || 'scoutconnect_super_secret_key_2026';
 
-// --- NEW: CLOUD STORAGE MOCK (MULTER SETUP) ---
-// Ensure the uploads directory exists
+// --- CLOUD STORAGE MOCK (MULTER SETUP) ---
 const uploadDir = path.join(__dirname, 'uploads');
 if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir);
 
-// Configure where and how to save the files
 const storage = multer.diskStorage({
   destination: (req, file, cb) => cb(null, uploadDir),
   filename: (req, file, cb) => cb(null, `${Date.now()}-${file.originalname.replace(/\s/g, '_')}`)
 });
 const upload = multer({ storage });
-
-// Serve the uploads folder publicly so the mobile app can render the images
 app.use('/uploads', express.static(uploadDir));
 
 
@@ -45,6 +41,20 @@ const authenticateToken = (req, res, next) => {
     next();
   });
 };
+
+// --- PUBLIC ROUTE: GET ALL CLUBS FOR REGISTRATION ---
+app.get('/api/clubs/public', async (req, res) => {
+  try {
+    const clubs = await Club.findAll({ 
+      attributes: ['id', 'name', 'region'],
+      order: [['name', 'ASC']]
+    });
+    res.status(200).json(clubs);
+  } catch (error) {
+    console.error('Error fetching public clubs:', error);
+    res.status(500).json({ error: 'Failed to fetch clubs.' });
+  }
+});
 
 // --- AUTH ROUTES ---
 app.post('/api/auth/register', async (req, res) => {
@@ -73,15 +83,12 @@ app.post('/api/auth/login', async (req, res) => {
   }
 });
 
-// --- NEW: MEDIA UPLOAD ENDPOINT ---
+// --- MEDIA UPLOAD ENDPOINT ---
 app.post('/api/upload', authenticateToken, upload.single('media'), (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'No file uploaded.' });
-  
-  // Create a URL pointing to the newly saved file
   const fileUrl = `${req.protocol}://${req.get('host')}/uploads/${req.file.filename}`;
   res.status(200).json({ url: fileUrl });
 });
-
 
 // --- SMART CONFLICT RESOLUTION (SYNC) ---
 app.post('/api/sync', authenticateToken, async (req, res) => {
@@ -92,7 +99,6 @@ app.post('/api/sync', authenticateToken, async (req, res) => {
   try {
     if (records && records.length > 0) {
       for (const record of records) {
-        // FIXED: Included profilePhoto in the findOrCreate defaults and update logic
         const [player] = await Player.findOrCreate({
           where: { name: record.playerName, dateOfBirth: record.dateOfBirth },
           defaults: { 
@@ -107,7 +113,6 @@ app.post('/api/sync', authenticateToken, async (req, res) => {
         if (player.updatedAt < recordDate) {
           await player.update({ 
             currentClubId: clubId,
-            // Only overwrite the photo if the coach uploaded a new one
             ...(record.profilePhoto && { profilePhoto: record.profilePhoto })
           }, { transaction });
         }
