@@ -27,7 +27,7 @@ To evaluate the frontend interface and its connection to the live backend:
    * **Physical Device (Recommended):** Install the [Expo Go](https://expo.dev/go) app on an iOS or Android device and scan the QR code generated in the terminal.
    * **Emulator:** Press `a` in the terminal to launch the Android Emulator.
 
-*Note: The frontend is pre-configured to communicate with the deployed Render API (`https://scoutconnect-backend.onrender.com/api`). Simply register a new Coach or Scout account within the app to begin testing.*
+*Note: The frontend is pre-configured to communicate with the deployed Render API (`https://scoutconnect.onrender.com/`). Simply register a new Coach or Scout account within the app to begin testing.*
 
 ### Reviewing the Backend Code
 The backend logic (including the intelligent offline-sync conflict resolution and media upload routing) is located in the `/backend` directory. Because the application is already deployed via Render, there is no need to run this directory locally. Evaluators can review `server.js` and the `/models` directory to assess the server-side logic and database schemas.
