@@ -1,4 +1,5 @@
 # ScoutConnect: Football Talent Identification & Roster Management
+## Video link: https://youtu.be/Blgx8hFiS6s 
 
 ## 1. Project Description
 ScoutConnect is an offline-first mobile application designed to bridge the gap between grassroots football development and professional talent identification. Built specifically for environments with unreliable internet access (such as open-field pitches), it provides two distinct, role-based experiences:
