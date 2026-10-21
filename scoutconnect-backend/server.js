@@ -1,20 +1,21 @@
 // server.js
 const express = require('express');
 const cors = require('cors');
-const bcrypt = require('bcryptjs');
-const jwt = require('jsonwebtoken');
+const jwt = require('jsonwebtoken'); // Kept to verify Supabase JWTs locally
 const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
+const crypto = require('crypto');
 require('dotenv').config();
 
-const { sequelize, User, Player, Evaluation, MatchStat, Achievement, Shortlist, Club } = require('./models');
+const { sequelize, User, Player, Evaluation, MatchStat, Achievement, Shortlist, Club, Flag } = require('./models');
 
 const app = express();
 app.use(cors());
 app.use(express.json());
 
-const JWT_SECRET = process.env.JWT_SECRET || 'scoutconnect_super_secret_key_2026';
+// Your Supabase Project JWT Secret
+const SUPABASE_JWT_SECRET = process.env.SUPABASE_JWT_SECRET || 'your-supabase-jwt-secret';
 
 // --- CLOUD STORAGE MOCK (MULTER SETUP) ---
 const uploadDir = path.join(__dirname, 'uploads');
@@ -27,19 +28,24 @@ const storage = multer.diskStorage({
 const upload = multer({ storage });
 app.use('/uploads', express.static(uploadDir));
 
-
-// --- AUTHENTICATION MIDDLEWARE ---
-const authenticateToken = (req, res, next) => {
+// --- SUPABASE AUTHENTICATION MIDDLEWARE ---
+const authenticateToken = async (req, res, next) => {
   const authHeader = req.headers['authorization'];
   const token = authHeader && authHeader.split(' ')[1];
   
   if (!token) return res.status(401).json({ error: 'Access token required.' });
   
-  jwt.verify(token, JWT_SECRET, (err, user) => {
-    if (err) return res.status(403).json({ error: 'Invalid or expired token.' });
-    req.user = user;
+  try {
+    const decoded = jwt.verify(token, SUPABASE_JWT_SECRET);
+    // Supabase stores the user UUID in the 'sub' claim
+    const userRecord = await User.findByPk(decoded.sub);
+    if (!userRecord) return res.status(404).json({ error: 'User profile not found in Postgres.' });
+    
+    req.user = userRecord;
     next();
-  });
+  } catch (err) {
+    return res.status(403).json({ error: 'Invalid or expired token.' });
+  }
 };
 
 // --- PUBLIC ROUTE: GET ALL CLUBS FOR REGISTRATION ---
@@ -56,30 +62,40 @@ app.get('/api/clubs/public', async (req, res) => {
   }
 });
 
-// --- AUTH ROUTES ---
-app.post('/api/auth/register', async (req, res) => {
-  const { username, password, role, clubId } = req.body;
+// --- PROFILE SYNC (Called immediately after Supabase Sign-Up) ---
+app.post('/api/auth/sync-profile', async (req, res) => {
+  const { id, username, email, phone, role, clubId, newClubName, newClubRegion } = req.body;
   try {
-    const hashedPassword = await bcrypt.hash(password, 10);
-    const user = await User.create({ username, password: hashedPassword, role, clubId });
-    res.status(201).json({ message: 'User created successfully', userId: user.id });
-  } catch (error) {
-    res.status(500).json({ error: 'Registration failed.' });
-  }
-});
+    let assignedClubId = clubId;
 
-app.post('/api/auth/login', async (req, res) => {
-  const { username, password } = req.body;
-  try {
-    const user = await User.findOne({ where: { username } });
-    if (!user || !(await bcrypt.compare(password, user.password))) {
-      return res.status(401).json({ error: 'Invalid credentials.' });
+    if (role === 'Coach' && !clubId && newClubName) {
+      const [club] = await Club.findOrCreate({
+        where: { name: newClubName.trim() },
+        defaults: {
+          region: newClubRegion || 'Kigali',
+          isVerified: false
+        }
+      });
+      assignedClubId = club.id;
     }
-    
-    const token = jwt.sign({ id: user.id, role: user.role, clubId: user.clubId }, JWT_SECRET);
-    res.json({ token, role: user.role, username: user.username });
+
+    if (role === 'Coach' && !assignedClubId) {
+      return res.status(400).json({ error: 'Coaches must select or register an academy.' });
+    }
+
+    const user = await User.create({ 
+      id, // Pass exactly the UUID Supabase created
+      username: username.trim(), 
+      email: email.toLowerCase().trim(),
+      phone: phone || null,
+      role, 
+      clubId: role === 'Coach' ? assignedClubId : null 
+    });
+
+    res.status(201).json({ message: 'Profile synced successfully', user });
   } catch (error) {
-    res.status(500).json({ error: 'Login failed.' });
+    console.error('Profile sync error:', error);
+    res.status(500).json({ error: 'Profile sync failed.' });
   }
 });
 
@@ -90,46 +106,71 @@ app.post('/api/upload', authenticateToken, upload.single('media'), (req, res) =>
   res.status(200).json({ url: fileUrl });
 });
 
-// --- SMART CONFLICT RESOLUTION (SYNC) ---
+// --- SMART CONFLICT RESOLUTION (SYNC WITH DIGITAL SIGNATURE & CHECKLIST) ---
 app.post('/api/sync', authenticateToken, async (req, res) => {
   const { records, matchStats, achievements } = req.body;
   const clubId = req.user.clubId; 
+  const coachId = req.user.id;
   const transaction = await sequelize.transaction();
 
   try {
     if (records && records.length > 0) {
       for (const record of records) {
+        let parsedChecklist = null;
+        if (record.checklistJson) {
+          try {
+            parsedChecklist = typeof record.checklistJson === 'string' 
+              ? JSON.parse(record.checklistJson) 
+              : record.checklistJson;
+          } catch (e) {
+            parsedChecklist = null;
+          }
+        }
+
+        const resolvedPosition = record.position || parsedChecklist?.position || 'Forward';
+
         const [player] = await Player.findOrCreate({
-          where: { name: record.playerName, dateOfBirth: record.dateOfBirth },
+          where: { name: record.playerName, dateOfBirth: record.dateOfBirth, currentClubId: clubId },
           defaults: { 
-            position: record.position || 'Unknown', 
+            position: resolvedPosition, 
             currentClubId: clubId,
             profilePhoto: record.profilePhoto 
           },
           transaction
         });
 
-        const recordDate = new Date(record.timestamp);
+        const recordDate = new Date(record.timestamp || Date.now());
         if (player.updatedAt < recordDate) {
           await player.update({ 
             currentClubId: clubId,
+            position: resolvedPosition,
             ...(record.profilePhoto && { profilePhoto: record.profilePhoto })
           }, { transaction });
         }
+
+        const signaturePayload = `${coachId}-${player.id}-${record.sprintSpeed}-${record.dribblingScore}-${recordDate.getTime()}`;
+        const coachSignature = crypto.createHmac('sha256', process.env.JWT_SECRET || 'fallback_secret').update(signaturePayload).digest('hex');
 
         await Evaluation.create({
           playerId: player.id,
           sprintSpeed: record.sprintSpeed,
           dribblingScore: record.dribblingScore,
           workRate: record.workRate,
-          evalType: record.evalType 
+          evalType: record.evalType,
+          evaluatorName: parsedChecklist?.evaluatorName || null,
+          evaluationDate: parsedChecklist?.evaluationDate || null,
+          overallRating: parsedChecklist?.overallRating || null,
+          strengths: parsedChecklist?.strengths || null,
+          areasForImprovement: parsedChecklist?.areasForImprovement || null,
+          checklistData: parsedChecklist,
+          coachSignature
         }, { transaction });
       }
     }
 
     if (matchStats && matchStats.length > 0) {
       for (const stat of matchStats) {
-        const player = await Player.findOne({ where: { name: stat.playerName, dateOfBirth: stat.dateOfBirth }, transaction });
+        const player = await Player.findOne({ where: { name: stat.playerName, dateOfBirth: stat.dateOfBirth, currentClubId: clubId }, transaction });
         if (player) {
           await MatchStat.create({ 
             playerId: player.id, competition: stat.competition, matchDate: stat.matchDate, opponent: stat.opponent,       
@@ -141,7 +182,7 @@ app.post('/api/sync', authenticateToken, async (req, res) => {
 
     if (achievements && achievements.length > 0) {
       for (const ach of achievements) {
-        const player = await Player.findOne({ where: { name: ach.playerName, dateOfBirth: ach.dateOfBirth }, transaction });
+        const player = await Player.findOne({ where: { name: ach.playerName, dateOfBirth: ach.dateOfBirth, currentClubId: clubId }, transaction });
         if (player) {
           await Achievement.create({ playerId: player.id, title: ach.title, year: ach.year }, { transaction });
         }
@@ -149,12 +190,42 @@ app.post('/api/sync', authenticateToken, async (req, res) => {
     }
 
     await transaction.commit();
-    res.status(200).json({ message: 'Synchronized successfully.' });
+    res.status(200).json({ message: 'Synchronized successfully with accountability audit trail.' });
 
   } catch (error) {
     await transaction.rollback();
     console.error('Sync Error:', error);
     res.status(500).json({ error: 'Failed to synchronize data.' });
+  }
+});
+
+// --- COMMUNITY REPORTING / FLAGGING ENDPOINT ---
+app.post('/api/flags', authenticateToken, async (req, res) => {
+  const { playerId, reason } = req.body;
+  const reporterId = req.user.id;
+
+  try {
+    const flag = await Flag.create({ reporterId, playerId, reason });
+
+    const player = await Player.findByPk(playerId, { include: [Club] });
+    if (player && player.Club) {
+      const totalFlags = await Flag.count({
+        include: [{ model: Player, where: { currentClubId: player.Club.id } }],
+        where: { status: 'Pending' }
+      });
+
+      if (totalFlags >= 5 && player.Club.standingStatus !== 'Penalized') {
+        await player.Club.update({
+          standingStatus: 'Penalized',
+          trustScore: Math.max(0, (player.Club.trustScore || 100) - 15)
+        });
+      }
+    }
+
+    res.status(201).json({ message: 'Profile successfully flagged for manual audit.', flag });
+  } catch (error) {
+    console.error('Flag error:', error);
+    res.status(500).json({ error: 'Failed to submit flag report.' });
   }
 });
 
@@ -174,7 +245,7 @@ app.get('/api/players', authenticateToken, async (req, res) => {
       where: playerWhere, limit: parseInt(limit), offset: parseInt(offset), distinct: true, 
       include: [
         evaluationInclude, { model: MatchStat }, { model: Achievement },
-        { model: Club, attributes: ['name', 'contactEmail', 'contactPhone'] } 
+        { model: Club, attributes: ['name', 'contactEmail', 'contactPhone', 'standingStatus', 'trustScore'] } 
       ] 
     });
 
@@ -188,7 +259,12 @@ app.get('/api/players', authenticateToken, async (req, res) => {
 app.get('/api/players/:id', authenticateToken, async (req, res) => {
   try {
     const player = await Player.findByPk(req.params.id, {
-      include: [{ model: Evaluation }, { model: MatchStat }, { model: Achievement }, { model: Club, attributes: ['name'] }],
+      include: [
+        { model: Evaluation }, 
+        { model: MatchStat }, 
+        { model: Achievement }, 
+        { model: Club, attributes: ['name', 'region', 'contactEmail', 'contactPhone', 'standingStatus', 'trustScore'] }
+      ],
       order: [ [Evaluation, 'createdAt', 'ASC'], [MatchStat, 'matchDate', 'DESC'] ]
     });
     if (!player) return res.status(404).json({ error: 'Player not found.' });
@@ -242,7 +318,8 @@ app.get('/api/club', authenticateToken, async (req, res) => {
     const club = await Club.findByPk(req.user.clubId);
     if (!club) return res.status(404).json({ error: 'Club not found.' });
     const playerCount = await Player.count({ where: { currentClubId: req.user.clubId } });
-    res.status(200).json({ club, playerCount });
+    // Return both the club data AND the newly appended email/phone from req.user
+    res.status(200).json({ club, playerCount, coachProfile: req.user });
   } catch (error) {
     res.status(500).json({ error: 'Failed to fetch club information.' });
   }
