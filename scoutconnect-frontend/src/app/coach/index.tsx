@@ -1,11 +1,12 @@
 // src/app/coach/index.tsx
 import React, { useEffect, useState } from 'react';
-import { StyleSheet, Text, View, TextInput, TouchableOpacity, Alert, ScrollView, Image, ActivityIndicator } from 'react-native';
+import { StyleSheet, Text, View, TextInput, TouchableOpacity, Alert, ScrollView, Image, ActivityIndicator, Modal, FlatList, Platform } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import NetInfo from '@react-native-community/netinfo';
 import * as SecureStore from 'expo-secure-store';
 import * as ImagePicker from 'expo-image-picker';
 import { Ionicons } from '@expo/vector-icons';
+import DateTimePicker from '@react-native-community/datetimepicker';
 import { API_BASE, Colors, CardSpec } from '../../constants/designSystem';
 import { 
   initDB, saveEvaluationLocally, deleteEvaluationDraft, saveMatchStatLocally, saveAchievementLocally, 
@@ -15,6 +16,8 @@ import {
 
 const UPLOAD_URL = `${API_BASE}/upload`;
 const SYNC_URL = `${API_BASE}/sync`;
+const CLUB_API = `${API_BASE}/club`;
+const ROSTER_API = `${API_BASE}/club/players`;
 
 const RATING_OPTIONS = [
   { value: 1, short: 'Needs Imp.', full: 'Needs Improvement' },
@@ -23,7 +26,12 @@ const RATING_OPTIONS = [
   { value: 4, short: 'Excellent', full: 'Excellent' },
 ];
 
-const POSITIONS = ['Goalkeeper', 'Defender', 'Midfielder', 'Forward', 'Other'];
+const POSITION_CATEGORIES = {
+  Goalkeeper: ['Goalkeeper'],
+  Defender: ['Center Back', 'Left Fullback', 'Right Fullback', 'Left Wingback', 'Right Wingback'],
+  Midfielder: ['Defensive Midfielder', 'Central Midfielder', 'Attacking Midfielder', 'Left Midfielder', 'Right Midfielder'],
+  Forward: ['Left Winger', 'Right Winger', 'Striker / Center Forward'],
+};
 
 const STAGES = [
   { id: 1, title: 'Identity & Info', icon: 'person-outline' },
@@ -35,6 +43,8 @@ const STAGES = [
 
 export default function CoachScreen() {
   const [activeTab, setActiveTab] = useState<'Evaluation' | 'MatchStat' | 'Achievement'>('Evaluation'); 
+  const [clubNameDisplay, setClubNameDisplay] = useState('My Academy');
+  const [rosterList, setRosterList] = useState<any[]>([]);
   
   // --- STAGED CHECKLIST STATE ---
   const [currentStage, setCurrentStage] = useState<number>(1);
@@ -43,64 +53,47 @@ export default function CoachScreen() {
   // Stage 1: Identity & Context
   const [playerFirstName, setPlayerFirstName] = useState('');
   const [playerLastName, setPlayerLastName] = useState('');
+  
+  // Date Picker States
   const [dateOfBirth, setDateOfBirth] = useState('2008-01-01');
-  const [position, setPosition] = useState('Forward');
+  const [showDobPicker, setShowDobPicker] = useState(false);
+  const [matchDate, setMatchDate] = useState('');
+  const [showMatchDatePicker, setShowMatchDatePicker] = useState(false);
+
+  const [mainPosition, setMainPosition] = useState('Striker / Center Forward');
+  const [subPosition, setSubPosition] = useState('None');
+  const [showPositionModal, setShowPositionModal] = useState(false);
+  const [positionTargetType, setPositionTargetType] = useState<'main' | 'sub'>('main');
+
   const [teamName, setTeamName] = useState('');
   const [evaluatorFirstName, setEvaluatorFirstName] = useState('');
   const [evaluatorLastName, setEvaluatorLastName] = useState('');
-  const [evalMonth, setEvalMonth] = useState('10');
-  const [evalDay, setEvalDay] = useState('19');
-  const [evalYear, setEvalYear] = useState('2026');
   const [profilePhoto, setProfilePhoto] = useState<string | null>(null);
 
-  // Stage 2: Technical Skills Assessment (1-4)
-  const [technical, setTechnical] = useState<Record<string, number>>({
-    ballControl: 3,
-    passingAccuracy: 3,
-    dribbling: 3,
-    shooting: 3,
-    firstTouch: 3,
-  });
-
-  // Stage 3: Tactical Awareness Assessment (1-4)
-  const [tactical, setTactical] = useState<Record<string, number>>({
-    positioning: 3,
-    decisionMaking: 3,
-    gameVision: 3,
-    offTheBallMovement: 3,
-  });
-
-  // Stage 4: Physical & Psychological Attributes Assessment (1-4) + Optional 30m Sprint
-  const [physical, setPhysical] = useState<Record<string, number>>({
-    speed: 3,
-    stamina: 3,
-    strength: 3,
-    agility: 3,
-  });
-  const [sprintSpeed, setSprintSpeed] = useState(''); // Optional stopwatch 30m time
-  const [psychological, setPsychological] = useState<Record<string, number>>({
-    teamwork: 3,
-    attitude: 3,
-    workEthic: 3,
-    coachability: 3,
-  });
+  // Stage 2, 3, 4: Attributes
+  const [technical, setTechnical] = useState<Record<string, number>>({ ballControl: 0, passingAccuracy: 0, dribbling: 0, shooting: 0, firstTouch: 0 });
+  const [tactical, setTactical] = useState<Record<string, number>>({ positioning: 0, decisionMaking: 0, gameVision: 0, offTheBallMovement: 0 });
+  const [physical, setPhysical] = useState<Record<string, number>>({ speed: 0, stamina: 0, strength: 0, agility: 0 });
+  const [sprintSpeed, setSprintSpeed] = useState('');
+  const [psychological, setPsychological] = useState<Record<string, number>>({ teamwork: 0, attitude: 0, workEthic: 0, coachability: 0 });
 
   // Stage 5: Overall Performance Rating & Open Notes
-  const [overallRating, setOverallRating] = useState<number>(4); // 1-5 scale
+  const [overallRating, setOverallRating] = useState<number>(0); 
   const [strengths, setStrengths] = useState('');
   const [areasForImprovement, setAreasForImprovement] = useState('');
   const [evalType] = useState('Checklist');
 
   // --- MATCH STATS & ACHIEVEMENTS STATE ---
-  const [statPlayerName, setStatPlayerName] = useState('');
+  const [selectedPlayerId, setSelectedPlayerId] = useState('');
+  const [selectedPlayerNameDisplay, setSelectedPlayerNameDisplay] = useState('Select Roster Athlete');
+  const [showPlayerPickerModal, setShowPlayerPickerModal] = useState(false);
+
   const [competition, setCompetition] = useState('');
-  const [matchDate, setMatchDate] = useState('');
   const [opponent, setOpponent] = useState('');
   const [matchResult, setMatchResult] = useState('');
   const [goals, setGoals] = useState('0');
   const [assists, setAssists] = useState('0');
   const [minutesPlayed, setMinutesPlayed] = useState('');
-  
   const [title, setTitle] = useState('');
   const [year, setYear] = useState('');
   
@@ -115,6 +108,7 @@ export default function CoachScreen() {
       try {
         await initDB();
         await checkUnsyncedRecords();
+        await fetchCoachClubAndRoster();
       } catch (err) {
         console.log('DB Init Error:', err);
       }
@@ -126,6 +120,30 @@ export default function CoachScreen() {
     });
     return () => unsubscribe();
   }, []);
+
+  const fetchCoachClubAndRoster = async () => {
+    try {
+      const token = await SecureStore.getItemAsync('userToken');
+      if (!token) return;
+
+      const clubRes = await fetch(CLUB_API, { headers: { 'Authorization': `Bearer ${token}` } });
+      if (clubRes.ok) {
+        const clubData = await clubRes.json();
+        if (clubData?.club?.name) {
+          setClubNameDisplay(clubData.club.name.toUpperCase());
+          setTeamName(clubData.club.name);
+        }
+      }
+
+      const rosterRes = await fetch(ROSTER_API, { headers: { 'Authorization': `Bearer ${token}` } });
+      if (rosterRes.ok) {
+        const rosterData = await rosterRes.json();
+        setRosterList(rosterData);
+      }
+    } catch (e) {
+      console.log('Could not fetch club/roster metadata:', e);
+    }
+  };
 
   const checkUnsyncedRecords = async () => {
     const drafts = await getDraftEvaluations();
@@ -143,15 +161,15 @@ export default function CoachScreen() {
     setPlayerFirstName('');
     setPlayerLastName('');
     setDateOfBirth('2008-01-01');
-    setPosition('Forward');
-    setTeamName('');
+    setMainPosition('Striker / Center Forward');
+    setSubPosition('None');
     setProfilePhoto(null);
-    setTechnical({ ballControl: 3, passingAccuracy: 3, dribbling: 3, shooting: 3, firstTouch: 3 });
-    setTactical({ positioning: 3, decisionMaking: 3, gameVision: 3, offTheBallMovement: 3 });
-    setPhysical({ speed: 3, stamina: 3, strength: 3, agility: 3 });
+    setTechnical({ ballControl: 0, passingAccuracy: 0, dribbling: 0, shooting: 0, firstTouch: 0 });
+    setTactical({ positioning: 0, decisionMaking: 0, gameVision: 0, offTheBallMovement: 0 });
+    setPhysical({ speed: 0, stamina: 0, strength: 0, agility: 0 });
     setSprintSpeed('');
-    setPsychological({ teamwork: 3, attitude: 3, workEthic: 3, coachability: 3 });
-    setOverallRating(4);
+    setPsychological({ teamwork: 0, attitude: 0, workEthic: 0, coachability: 0 });
+    setOverallRating(0);
     setStrengths('');
     setAreasForImprovement('');
   };
@@ -161,7 +179,7 @@ export default function CoachScreen() {
     setCurrentStage(draft.currentStage || 1);
     setProfilePhoto(draft.profilePhoto || null);
     setDateOfBirth(draft.dateOfBirth || '2008-01-01');
-    setPosition(draft.position || 'Forward');
+    setMainPosition(draft.position || 'Striker / Center Forward');
 
     if (draft.checklistJson) {
       try {
@@ -169,11 +187,9 @@ export default function CoachScreen() {
         setPlayerFirstName(parsed.playerFirstName || '');
         setPlayerLastName(parsed.playerLastName || '');
         setTeamName(parsed.teamName || '');
+        if (parsed.subPosition) setSubPosition(parsed.subPosition);
         setEvaluatorFirstName(parsed.evaluatorFirstName || '');
         setEvaluatorLastName(parsed.evaluatorLastName || '');
-        if (parsed.evalMonth) setEvalMonth(parsed.evalMonth);
-        if (parsed.evalDay) setEvalDay(parsed.evalDay);
-        if (parsed.evalYear) setEvalYear(parsed.evalYear);
         if (parsed.technical) setTechnical(parsed.technical);
         if (parsed.tactical) setTactical(parsed.tactical);
         if (parsed.physical) setPhysical(parsed.physical);
@@ -192,7 +208,8 @@ export default function CoachScreen() {
     }
   };
 
-  const handleRemoveDraft = async (id: number) => {
+  const handleRemoveDraftOrFinal = async (id: number) => {
+    // Works for both drafts and finalized records queued in SQLite
     await deleteEvaluationDraft(id);
     if (editingDraftId === id) resetEvaluationForm();
     await checkUnsyncedRecords();
@@ -204,14 +221,12 @@ export default function CoachScreen() {
       Alert.alert("Permission Required", "Please allow access to photos to upload profile pictures.");
       return;
     }
-
     let result = await ImagePicker.launchImageLibraryAsync({
       mediaTypes: ImagePicker.MediaTypeOptions.Images,
       allowsEditing: true,
       aspect: [1, 1],
       quality: 0.5,
     });
-
     if (!result.canceled) {
       setProfilePhoto(result.assets[0].uri);
     }
@@ -269,15 +284,17 @@ export default function CoachScreen() {
         
         await checkUnsyncedRecords(); 
         Alert.alert('Sync Successful', 'Pitchside telemetry synced with cloud database!');
+      } else {
+        const errJson = await response.json();
+        Alert.alert('Sync Notice', errJson.error || 'Server rejected synchronization payload.');
       }
     } catch (error) {
-      console.log('Sync failed:', error);
+      console.log('Sync failed connection error:', error);
     } finally {
       setIsSyncing(false);
     }
   };
 
-  // Compute averages & build payload for either Draft (isDraft=1) or Final Submission (isDraft=0)
   const persistEvaluation = async (isDraftFlag: 0 | 1) => {
     const fullName = `${playerFirstName.trim()} ${playerLastName.trim()}`.trim();
     if (!fullName) {
@@ -297,37 +314,39 @@ export default function CoachScreen() {
         setCurrentStage(1);
         return;
       }
+      const unratedTech = Object.values(technical).some(v => v === 0);
+      const unratedTac = Object.values(tactical).some(v => v === 0);
+      const unratedPhys = Object.values(physical).some(v => v === 0);
+      const unratedPsych = Object.values(psychological).some(v => v === 0);
+
+      if (unratedTech || unratedTac || unratedPhys || unratedPsych || overallRating === 0) {
+        Alert.alert('Incomplete Ratings', 'Please ensure all technical, tactical, physical, psychological attributes and overall rating have been explicitly reviewed before final submission.');
+        return;
+      }
     }
 
-    const avg = (obj: Record<string, number>) => {
-      const vals = Object.values(obj);
-      return vals.reduce((a, b) => a + b, 0) / vals.length;
-    };
+    const sanitizeVal = (val: number) => (val === 0 ? 3 : val);
+    const techAvg4 = Object.values(technical).reduce((a, b) => a + sanitizeVal(b), 0) / Object.values(technical).length;
+    const tacAvg4 = Object.values(tactical).reduce((a, b) => a + sanitizeVal(b), 0) / Object.values(tactical).length;
+    const physAvg4 = Object.values(physical).reduce((a, b) => a + sanitizeVal(b), 0) / Object.values(physical).length;
+    const psychAvg4 = Object.values(psychological).reduce((a, b) => a + sanitizeVal(b), 0) / Object.values(psychological).length;
 
-    const techAvg4 = avg(technical);         // 1 to 4
-    const tacAvg4 = avg(tactical);           // 1 to 4
-    const physAvg4 = avg(physical);          // 1 to 4
-    const psychAvg4 = avg(psychological);    // 1 to 4
-
-    // Normalize Technical Average to 1-5 scale for backward-compatible charts
     const computedDribblingScore = parseFloat(((techAvg4 / 4) * 5).toFixed(1));
-    // Use entered stopwatch time or estimate from Physical Speed rating
-    const computedSprintSpeed = sprintSpeed ? parseFloat(sprintSpeed) : parseFloat((4.8 - (physical.speed * 0.25)).toFixed(2));
+    const activeSpeedRating = physical.speed === 0 ? 3 : physical.speed;
+    const computedSprintSpeed = sprintSpeed ? parseFloat(sprintSpeed) : parseFloat((4.8 - (activeSpeedRating * 0.25)).toFixed(2));
 
     const evaluatorFullName = `${evaluatorFirstName.trim()} ${evaluatorLastName.trim()}`.trim();
-    const evaluationDate = `${evalYear}-${evalMonth.padStart(2, '0')}-${evalDay.padStart(2, '0')}`;
+    const evaluationDate = new Date().toISOString().split('T')[0]; // Auto-set to Today
 
     const checklistObject = {
       playerFirstName: playerFirstName.trim(),
       playerLastName: playerLastName.trim(),
-      position,
+      position: mainPosition,
+      subPosition,
       teamName: teamName.trim(),
       evaluatorFirstName: evaluatorFirstName.trim(),
       evaluatorLastName: evaluatorLastName.trim(),
       evaluatorName: evaluatorFullName,
-      evalMonth,
-      evalDay,
-      evalYear,
       evaluationDate,
       technical,
       tactical,
@@ -340,12 +359,12 @@ export default function CoachScreen() {
         psychological: parseFloat(psychAvg4.toFixed(2)),
       },
       sprintSpeed: computedSprintSpeed,
-      overallRating,
+      overallRating: overallRating === 0 ? 3 : overallRating,
       strengths: strengths.trim(),
       areasForImprovement: areasForImprovement.trim(),
     };
 
-    const summaryWorkRate = `${position} | Overall: ${overallRating}/5 | Strengths: ${strengths.trim() || 'Logged in checklist'}`;
+    const summaryWorkRate = `${mainPosition} (Sub: ${subPosition}) | Overall: ${overallRating || 3}/5`;
 
     await saveEvaluationLocally(
       fullName,
@@ -355,7 +374,7 @@ export default function CoachScreen() {
       computedDribblingScore,
       summaryWorkRate,
       evalType,
-      position,
+      mainPosition,
       JSON.stringify(checklistObject),
       currentStage,
       isDraftFlag,
@@ -365,7 +384,7 @@ export default function CoachScreen() {
     await checkUnsyncedRecords();
 
     if (isDraftFlag === 1) {
-      Alert.alert('Draft Saved', `Progress for ${fullName} (Stage ${currentStage}/5) saved locally. You can resume anytime.`);
+      Alert.alert('Draft Saved', `Progress for ${fullName} (Stage ${currentStage}/5) saved locally.`);
     } else {
       resetEvaluationForm();
       Alert.alert('Evaluation Queued', `${fullName}'s full evaluation checklist is finalized and queued for sync.`);
@@ -375,19 +394,19 @@ export default function CoachScreen() {
 
   const handleSaveStatsOrMedals = async () => {
     try {
-      if (!statPlayerName.trim()) {
-        Alert.alert('Validation Error', 'Player Full Name is required.');
+      if (!selectedPlayerId) {
+        Alert.alert('Validation Error', 'Please select a roster player to guarantee unique identification.');
         return;
       }
       if (activeTab === 'MatchStat') {
-        await saveMatchStatLocally(statPlayerName.trim(), dateOfBirth, competition, matchDate, opponent, matchResult, parseInt(goals) || 0, parseInt(assists) || 0, parseInt(minutesPlayed) || 90);
+        await saveMatchStatLocally(selectedPlayerNameDisplay, dateOfBirth, competition, matchDate, opponent, matchResult, parseInt(goals) || 0, parseInt(assists) || 0, parseInt(minutesPlayed) || 90);
         setCompetition(''); setMatchDate(''); setOpponent(''); setMatchResult(''); setGoals('0'); setAssists('0'); setMinutesPlayed('');
       } else if (activeTab === 'Achievement') {
-        await saveAchievementLocally(statPlayerName.trim(), dateOfBirth, title, parseInt(year) || 2026);
+        await saveAchievementLocally(selectedPlayerNameDisplay, dateOfBirth, title, parseInt(year) || 2026);
         setTitle(''); setYear('');
       }
       await checkUnsyncedRecords();
-      Alert.alert('Saved to Local Cache', `${statPlayerName} record cached offline.`);
+      Alert.alert('Saved to Local Cache', `Record securely linked to ${selectedPlayerNameDisplay} (ID: ${selectedPlayerId.substring(0, 6)}...).`);
       triggerSync();
     } catch (err) {
       Alert.alert('Error', (err as Error).message);
@@ -399,51 +418,60 @@ export default function CoachScreen() {
     fieldKey: string,
     stateObj: Record<string, number>,
     setStateFn: React.Dispatch<React.SetStateAction<Record<string, number>>>
-  ) => (
-    <View key={fieldKey} style={styles.matrixRow}>
-      <View style={styles.matrixHeaderRow}>
-        <Text style={styles.matrixAttrLabel}>{label}</Text>
-        <Text style={styles.matrixSelectedBadge}>
-          {RATING_OPTIONS.find(o => o.value === stateObj[fieldKey])?.full}
-        </Text>
+  ) => {
+    const isUnreviewed = stateObj[fieldKey] === 0;
+    return (
+      <View key={fieldKey} style={[styles.matrixRow, isUnreviewed && styles.matrixRowUnreviewed]}>
+        <View style={styles.matrixHeaderRow}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+            <Text style={styles.matrixAttrLabel}>{label}</Text>
+            {isUnreviewed && (
+              <View style={styles.unreviewedPill}>
+                <Text style={styles.unreviewedPillText}>DEFAULT / UNREVIEWED</Text>
+              </View>
+            )}
+          </View>
+          <Text style={styles.matrixSelectedBadge}>
+            {isUnreviewed ? 'Not Rated Yet' : RATING_OPTIONS.find(o => o.value === stateObj[fieldKey])?.full}
+          </Text>
+        </View>
+        <View style={styles.matrixOptionsRow}>
+          {RATING_OPTIONS.map(opt => {
+            const active = stateObj[fieldKey] === opt.value;
+            return (
+              <TouchableOpacity
+                key={opt.value}
+                style={[styles.matrixOptionBtn, active && styles.matrixOptionBtnActive]}
+                onPress={() => setStateFn(prev => ({ ...prev, [fieldKey]: opt.value }))}
+              >
+                <Text style={[styles.matrixOptionText, active && styles.matrixOptionTextActive]}>
+                  {opt.short}
+                </Text>
+              </TouchableOpacity>
+            );
+          })}
+        </View>
       </View>
-      <View style={styles.matrixOptionsRow}>
-        {RATING_OPTIONS.map(opt => {
-          const active = stateObj[fieldKey] === opt.value;
-          return (
-            <TouchableOpacity
-              key={opt.value}
-              style={[styles.matrixOptionBtn, active && styles.matrixOptionBtnActive]}
-              onPress={() => setStateFn(prev => ({ ...prev, [fieldKey]: opt.value }))}
-            >
-              <Text style={[styles.matrixOptionText, active && styles.matrixOptionTextActive]}>
-                {opt.short}
-              </Text>
-            </TouchableOpacity>
-          );
-        })}
-      </View>
-    </View>
-  );
+    );
+  };
 
   return (
     <SafeAreaView style={styles.container}>
       <ScrollView contentContainerStyle={{ paddingBottom: 30 }}>
         
-        {/* Offline Status Top Banner */}
         <View style={styles.topBanner}>
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
             <Ionicons name="flash" size={14} color={Colors.warningText} />
             <Text style={styles.topBannerText}>OFFLINE MODE • PITCHSIDE STORAGE ACTIVE</Text>
           </View>
           <View style={styles.pillBadge}>
-            <Text style={styles.pillBadgeText}>v2.5 Staged</Text>
+            <Text style={styles.pillBadgeText}>v2.6 Enhanced</Text>
           </View>
         </View>
 
         <View style={styles.headerRow}>
           <View>
-            <Text style={styles.subHeader}>SCOUTCONNECT ACADEMY</Text>
+            <Text style={styles.subHeader}>{clubNameDisplay}</Text>
             <Text style={styles.header}>Player Evaluation Checklist</Text>
           </View>
           <View style={styles.coachBadge}>
@@ -451,7 +479,6 @@ export default function CoachScreen() {
           </View>
         </View>
         
-        {/* Main Tab Switcher */}
         <View style={styles.tabContainer}>
           <TouchableOpacity onPress={() => setActiveTab('Evaluation')} style={[styles.tabBtn, activeTab === 'Evaluation' && styles.tabBtnActive]}>
             <Text style={[styles.tabText, activeTab === 'Evaluation' && styles.tabTextActive]}>Checklist</Text>
@@ -464,7 +491,7 @@ export default function CoachScreen() {
           </TouchableOpacity>
         </View>
 
-        {/* Saved Drafts Banner (Allows Resuming Incomplete Evaluations) */}
+        {/* Saved Drafts Banner */}
         {activeTab === 'Evaluation' && draftsList.length > 0 && (
           <View style={styles.draftsCard}>
             <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
@@ -484,10 +511,10 @@ export default function CoachScreen() {
                   </View>
                   <View style={{ marginLeft: 10, flex: 1 }}>
                     <Text style={{ fontWeight: 'bold', color: Colors.textPrimary, fontSize: 14 }}>{draft.playerName}</Text>
-                    <Text style={{ fontSize: 11, color: Colors.textSecondary }}>{draft.position || 'Forward'} • Tap to continue</Text>
+                    <Text style={{ fontSize: 11, color: Colors.textSecondary }}>{draft.position || 'Forward'} • Click to continue</Text>
                   </View>
                 </TouchableOpacity>
-                <TouchableOpacity onPress={() => handleRemoveDraft(draft.id)} style={{ padding: 6 }}>
+                <TouchableOpacity onPress={() => handleRemoveDraftOrFinal(draft.id)} style={{ padding: 6 }}>
                   <Ionicons name="trash-outline" size={18} color={Colors.danger} />
                 </TouchableOpacity>
               </View>
@@ -495,7 +522,6 @@ export default function CoachScreen() {
           </View>
         )}
 
-        {/* EVALUATION MULTI-STAGE CHECKLIST CARD */}
         {activeTab === 'Evaluation' && (
           <View style={styles.card}>
             <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
@@ -512,7 +538,6 @@ export default function CoachScreen() {
               )}
             </View>
 
-            {/* Interactive 5-Stage Progress Stepper */}
             <View style={styles.stepperContainer}>
               {STAGES.map((stage) => {
                 const isCurrent = currentStage === stage.id;
@@ -540,11 +565,11 @@ export default function CoachScreen() {
               })}
             </View>
 
-            {/* STAGE 1: PLAYER & EVALUATOR IDENTITY */}
+            {/* STAGE 1 */}
             {currentStage === 1 && (
               <View>
                 <Text style={styles.sectionTitle}>Stage 1: Player & Evaluator Info</Text>
-                <Text style={styles.sectionSub}>Fill out basic profile info now and save as a draft anytime.</Text>
+                <Text style={styles.sectionSub}>Set player details, main position, and secondary role.</Text>
 
                 <View style={styles.imagePickerContainer}>
                   <TouchableOpacity onPress={pickImage} style={styles.imagePlaceholder}>
@@ -569,17 +594,22 @@ export default function CoachScreen() {
                   </View>
                 </View>
 
-                <Text style={styles.label}>Player Position *</Text>
-                <View style={styles.positionGrid}>
-                  {POSITIONS.map(pos => (
-                    <TouchableOpacity
-                      key={pos}
-                      onPress={() => setPosition(pos)}
-                      style={[styles.posOption, position === pos && styles.posOptionActive]}
-                    >
-                      <Text style={[styles.posOptionText, position === pos && styles.posOptionTextActive]}>{pos}</Text>
+                <View style={styles.row}>
+                  <View style={styles.halfCol}>
+                    <Text style={styles.label}>Main Position *</Text>
+                    <TouchableOpacity style={styles.dropdownSelector} onPress={() => { setPositionTargetType('main'); setShowPositionModal(true); }}>
+                      <Text style={styles.dropdownSelectorText} numberOfLines={1}>{mainPosition}</Text>
+                      <Ionicons name="chevron-down" size={14} color={Colors.textSecondary} />
                     </TouchableOpacity>
-                  ))}
+                  </View>
+
+                  <View style={styles.halfCol}>
+                    <Text style={styles.label}>Secondary Position</Text>
+                    <TouchableOpacity style={styles.dropdownSelector} onPress={() => { setPositionTargetType('sub'); setShowPositionModal(true); }}>
+                      <Text style={styles.dropdownSelectorText} numberOfLines={1}>{subPosition}</Text>
+                      <Ionicons name="chevron-down" size={14} color={Colors.textSecondary} />
+                    </TouchableOpacity>
+                  </View>
                 </View>
 
                 <View style={styles.row}>
@@ -589,7 +619,21 @@ export default function CoachScreen() {
                   </View>
                   <View style={styles.halfCol}>
                     <Text style={styles.label}>Player DOB</Text>
-                    <TextInput style={styles.input} placeholder="YYYY-MM-DD" placeholderTextColor="#9CA3AF" value={dateOfBirth} onChangeText={setDateOfBirth} />
+                    <TouchableOpacity style={styles.dropdownSelector} onPress={() => setShowDobPicker(true)}>
+                      <Text style={styles.dropdownSelectorText}>{dateOfBirth || 'YYYY-MM-DD'}</Text>
+                      <Ionicons name="calendar-outline" size={14} color={Colors.textSecondary} />
+                    </TouchableOpacity>
+                    {showDobPicker && (
+                      <DateTimePicker
+                        value={new Date(dateOfBirth)}
+                        mode="date"
+                        display="default"
+                        onValueChange={(e, selectedDate) => {
+                          setShowDobPicker(Platform.OS === 'ios');
+                          if (selectedDate) setDateOfBirth(selectedDate.toISOString().split('T')[0]);
+                        }}
+                      />
+                    )}
                   </View>
                 </View>
 
@@ -602,21 +646,19 @@ export default function CoachScreen() {
                     <TextInput style={styles.input} placeholder="Last Name" placeholderTextColor="#9CA3AF" value={evaluatorLastName} onChangeText={setEvaluatorLastName} />
                   </View>
                 </View>
-
-                <Text style={styles.label}>Evaluation Date * (MM / DD / YYYY)</Text>
-                <View style={styles.row}>
-                  <TextInput style={[styles.input, { flex: 0.28, textAlign: 'center' }]} placeholder="MM" maxLength={2} keyboardType="numeric" value={evalMonth} onChangeText={setEvalMonth} />
-                  <TextInput style={[styles.input, { flex: 0.28, textAlign: 'center' }]} placeholder="DD" maxLength={2} keyboardType="numeric" value={evalDay} onChangeText={setEvalDay} />
-                  <TextInput style={[styles.input, { flex: 0.4, textAlign: 'center' }]} placeholder="YYYY" maxLength={4} keyboardType="numeric" value={evalYear} onChangeText={setEvalYear} />
+                
+                <Text style={styles.label}>Evaluation Date *</Text>
+                <View style={[styles.input, { backgroundColor: '#E5E7EB', borderColor: '#D1D5DB' }]}>
+                  <Text style={{ color: Colors.textSecondary }}>{new Date().toDateString()} (Auto-logged today)</Text>
                 </View>
               </View>
             )}
 
-            {/* STAGE 2: TECHNICAL SKILLS ASSESSMENT */}
+            {/* STAGE 2 */}
             {currentStage === 2 && (
               <View>
                 <Text style={styles.sectionTitle}>Stage 2: Technical Skills Assessment *</Text>
-                <Text style={styles.sectionSub}>Rate each technical attribute from Needs Improvement to Excellent.</Text>
+                <Text style={styles.sectionSub}>Unreviewed attributes are clearly flagged so you know what has been evaluated.</Text>
                 {renderRatingRow('Ball Control', 'ballControl', technical, setTechnical)}
                 {renderRatingRow('Passing Accuracy', 'passingAccuracy', technical, setTechnical)}
                 {renderRatingRow('Dribbling', 'dribbling', technical, setTechnical)}
@@ -625,7 +667,7 @@ export default function CoachScreen() {
               </View>
             )}
 
-            {/* STAGE 3: TACTICAL AWARENESS ASSESSMENT */}
+            {/* STAGE 3 */}
             {currentStage === 3 && (
               <View>
                 <Text style={styles.sectionTitle}>Stage 3: Tactical Awareness Assessment *</Text>
@@ -637,7 +679,7 @@ export default function CoachScreen() {
               </View>
             )}
 
-            {/* STAGE 4: PHYSICAL & PSYCHOLOGICAL ATTRIBUTES */}
+            {/* STAGE 4 */}
             {currentStage === 4 && (
               <View>
                 <Text style={styles.sectionTitle}>Stage 4: Physical Attributes *</Text>
@@ -664,7 +706,7 @@ export default function CoachScreen() {
               </View>
             )}
 
-            {/* STAGE 5: OVERALL RATING & SUMMARY NOTES */}
+            {/* STAGE 5 */}
             {currentStage === 5 && (
               <View>
                 <Text style={styles.sectionTitle}>Stage 5: Overall Rating & Review *</Text>
@@ -672,7 +714,7 @@ export default function CoachScreen() {
 
                 <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginTop: 5 }}>
                   <Text style={styles.label}>Overall Performance Rating (1-5) *</Text>
-                  <Text style={{ fontSize: 12, color: Colors.primary, fontWeight: 'bold' }}>{overallRating} / 5 • Verified</Text>
+                  <Text style={{ fontSize: 12, color: Colors.primary, fontWeight: 'bold' }}>{overallRating === 0 ? 'Not Rated Yet' : `${overallRating} / 5 • Verified`}</Text>
                 </View>
                 <View style={styles.starRow}>
                   {[1, 2, 3, 4, 5].map(star => (
@@ -689,7 +731,7 @@ export default function CoachScreen() {
                 <Text style={styles.label}>Strengths (What did the player do well?)</Text>
                 <TextInput 
                   style={[styles.input, { height: 75, textAlignVertical: 'top' }]} 
-                  placeholder="e.g. Exceptional close control under pressure, vocal organizer..." 
+                  placeholder="e.g. Exceptional close control under pressure..." 
                   placeholderTextColor="#9CA3AF"
                   multiline
                   value={strengths} 
@@ -699,7 +741,7 @@ export default function CoachScreen() {
                 <Text style={styles.label}>Areas for Improvement (What can the player work on?)</Text>
                 <TextInput 
                   style={[styles.input, { height: 75, textAlignVertical: 'top' }]} 
-                  placeholder="e.g. Weak foot distribution and defensive transition recovery..." 
+                  placeholder="e.g. Defensive transition recovery..." 
                   placeholderTextColor="#9CA3AF"
                   multiline
                   value={areasForImprovement} 
@@ -708,7 +750,6 @@ export default function CoachScreen() {
               </View>
             )}
 
-            {/* STAGE NAVIGATION & DRAFT CONTROLS */}
             <View style={styles.stageFooterRow}>
               {currentStage > 1 ? (
                 <TouchableOpacity style={styles.secondaryNavBtn} onPress={() => setCurrentStage(currentStage - 1)}>
@@ -739,19 +780,44 @@ export default function CoachScreen() {
           </View>
         )}
 
-        {/* MATCH STATS & ACHIEVEMENTS CARD */}
+        {/* MATCH STATS & ACHIEVEMENTS */}
         {activeTab !== 'Evaluation' && (
           <View style={styles.card}>
             <Text style={styles.sectionTitle}>{activeTab === 'MatchStat' ? 'Log Match Statistics' : 'Log Trophy / Medal'}</Text>
-            <Text style={styles.label}>Player Full Name *</Text>
-            <TextInput style={styles.input} placeholder="e.g. Mateo Kovacic" placeholderTextColor="#9CA3AF" value={statPlayerName} onChangeText={setStatPlayerName} />
+            
+            <Text style={styles.label}>Select Roster Athlete (Unique Identifier) *</Text>
+            <TouchableOpacity style={styles.dropdownSelector} onPress={() => setShowPlayerPickerModal(true)}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                <Ionicons name="person-circle-outline" size={20} color={Colors.primary} />
+                <Text style={[styles.dropdownSelectorText, selectedPlayerId && { fontWeight: 'bold', color: Colors.textPrimary }]}>
+                  {selectedPlayerNameDisplay}
+                </Text>
+              </View>
+              <Ionicons name="chevron-down" size={16} color={Colors.textSecondary} />
+            </TouchableOpacity>
 
             {activeTab === 'MatchStat' ? (
               <View>
                 <Text style={styles.label}>Competition / League</Text>
                 <TextInput style={styles.input} placeholder="e.g. Varsity League" placeholderTextColor="#9CA3AF" value={competition} onChangeText={setCompetition} />
+                
                 <Text style={styles.label}>Match Date</Text>
-                <TextInput style={styles.input} placeholder="YYYY-MM-DD" placeholderTextColor="#9CA3AF" value={matchDate} onChangeText={setMatchDate} />
+                <TouchableOpacity style={styles.dropdownSelector} onPress={() => setShowMatchDatePicker(true)}>
+                  <Text style={styles.dropdownSelectorText}>{matchDate || 'Select Date'}</Text>
+                  <Ionicons name="calendar-outline" size={14} color={Colors.textSecondary} />
+                </TouchableOpacity>
+                {showMatchDatePicker && (
+                  <DateTimePicker
+                    value={matchDate ? new Date(matchDate) : new Date()}
+                    mode="date"
+                    display="default"
+                    onValueChange={(e, selectedDate) => {
+                      setShowMatchDatePicker(Platform.OS === 'ios');
+                      if (selectedDate) setMatchDate(selectedDate.toISOString().split('T')[0]);
+                    }}
+                  />
+                )}
+
                 <Text style={styles.label}>Opponent</Text>
                 <TextInput style={styles.input} placeholder="e.g. Kigali FC" placeholderTextColor="#9CA3AF" value={opponent} onChangeText={setOpponent} />
                 <Text style={styles.label}>Final Result</Text>
@@ -787,7 +853,7 @@ export default function CoachScreen() {
           </View>
         )}
 
-        {/* Finalized Offline Buffer Queue Section */}
+        {/* Finalized Offline Buffer Queue */}
         <View style={styles.bufferCard}>
           <View style={{flexDirection: 'row', justifyContent: 'space-between', marginBottom: 10}}>
             <Text style={{fontWeight: 'bold', fontSize: 13, color: Colors.textSecondary}}>READY FOR SYNC (FINALIZED QUEUE)</Text>
@@ -799,22 +865,26 @@ export default function CoachScreen() {
           {cachedQueue.length === 0 ? (
             <Text style={{fontSize: 13, color: Colors.textSecondary, fontStyle: 'italic', textAlign: 'center', padding: 10}}>Buffer is clean. All finalized records synced.</Text>
           ) : (
-            cachedQueue.slice(0, 3).map((item, index) => (
-              <View key={index} style={styles.queueItem}>
-                <View style={styles.queueAvatar}>
-                  <Text style={{color: '#FFF', fontWeight: 'bold', fontSize: 11}}>{item.playerName.substring(0, 2).toUpperCase()}</Text>
+            cachedQueue.map((item, index) => (
+              <View key={item.id || index} style={styles.queueItem}>
+                <View style={{flexDirection: 'row', alignItems: 'center', flex: 1}}>
+                  <View style={styles.queueAvatar}>
+                    <Text style={{color: '#FFF', fontWeight: 'bold', fontSize: 11}}>{item.playerName.substring(0, 2).toUpperCase()}</Text>
+                  </View>
+                  <View style={{marginLeft: 10, flex: 1}}>
+                    <Text style={{fontWeight: 'bold', fontSize: 14, color: Colors.textPrimary}}>{item.playerName}</Text>
+                    <Text style={{fontSize: 12, color: Colors.textSecondary}} numberOfLines={1}>{item.workRate || 'Completed Checklist'}</Text>
+                  </View>
                 </View>
-                <View style={{flex: 1, marginLeft: 10}}>
-                  <Text style={{fontWeight: 'bold', fontSize: 14, color: Colors.textPrimary}}>{item.playerName}</Text>
-                  <Text style={{fontSize: 12, color: Colors.textSecondary}} numberOfLines={1}>{item.workRate || 'Completed Checklist'}</Text>
-                </View>
-                <Ionicons name="cloud-upload-outline" size={18} color={Colors.primary} />
+                {/* Trash Can to Delete Staged Finalizations */}
+                <TouchableOpacity onPress={() => handleRemoveDraftOrFinal(item.id)} style={{ padding: 6, marginRight: 4 }}>
+                  <Ionicons name="trash-outline" size={18} color={Colors.danger} />
+                </TouchableOpacity>
               </View>
             ))
           )}
         </View>
 
-        {/* Sync Status Box with Manual Sync Button */}
         <View style={styles.statusBox}>
           <View style={{flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between'}}>
             <View style={{flex: 1, marginRight: 10}}>
@@ -824,17 +894,95 @@ export default function CoachScreen() {
               </View>
               <Text style={styles.statusSub}>Drafts ({draftsList.length}) stay local until submitted</Text>
             </View>
-            <TouchableOpacity 
-              style={[styles.syncBtn, isSyncing && {backgroundColor: '#9CA3AF'}]} 
-              onPress={triggerSync}
-              disabled={isSyncing}
-            >
+            <TouchableOpacity style={[styles.syncBtn, isSyncing && {backgroundColor: '#9CA3AF'}]} onPress={triggerSync} disabled={isSyncing}>
               {isSyncing ? <ActivityIndicator size="small" color="#FFF" /> : <Text style={styles.syncBtnText}>Sync Now</Text>}
             </TouchableOpacity>
           </View>
         </View>
 
       </ScrollView>
+
+      {/* POSITIONS DROPDOWN MODAL */}
+      <Modal visible={showPositionModal} animationType="slide" transparent={true}>
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContent}>
+            <Text style={styles.modalTitle}>
+              {positionTargetType === 'main' ? 'Select Main Position' : 'Select Secondary Position'}
+            </Text>
+            <ScrollView style={{ maxHeight: 350, marginVertical: 10 }}>
+              {positionTargetType === 'sub' && (
+                <TouchableOpacity 
+                  style={styles.modalPositionItem} 
+                  onPress={() => { setSubPosition('None'); setShowPositionModal(false); }}
+                >
+                  <Text style={styles.modalPositionText}>None (Single Position)</Text>
+                </TouchableOpacity>
+              )}
+              {Object.entries(POSITION_CATEGORIES).map(([category, posList]) => (
+                <View key={category} style={{ marginBottom: 12 }}>
+                  <Text style={styles.modalCatHeader}>{category.toUpperCase()}</Text>
+                  {posList.map(pos => (
+                    <TouchableOpacity
+                      key={pos}
+                      style={styles.modalPositionItem}
+                      onPress={() => {
+                        if (positionTargetType === 'main') setMainPosition(pos);
+                        else setSubPosition(pos);
+                        setShowPositionModal(false);
+                      }}
+                    >
+                      <Text style={styles.modalPositionText}>{pos}</Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              ))}
+            </ScrollView>
+            <TouchableOpacity style={styles.modalCloseBtn} onPress={() => setShowPositionModal(false)}>
+              <Text style={styles.modalCloseText}>Cancel</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+
+      {/* UNIQUE PLAYER PICKER MODAL */}
+      <Modal visible={showPlayerPickerModal} animationType="slide" transparent={true}>
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContent}>
+            <Text style={styles.modalTitle}>Select Athlete from Roster</Text>
+            <Text style={styles.modalSub}>Guarantees accurate unique identification for stats and medals.</Text>
+            
+            {rosterList.length === 0 ? (
+              <Text style={{ textAlign: 'center', color: Colors.textSecondary, marginVertical: 20 }}>No synced players found on roster. Sync evaluations first.</Text>
+            ) : (
+              <FlatList
+                data={rosterList}
+                keyExtractor={(item) => item.id}
+                style={{ maxHeight: 300, marginVertical: 10 }}
+                renderItem={({ item }) => (
+                  <TouchableOpacity
+                    style={styles.modalPlayerItem}
+                    onPress={() => {
+                      setSelectedPlayerId(item.id);
+                      setSelectedPlayerNameDisplay(item.name);
+                      setShowPlayerPickerModal(false);
+                    }}
+                  >
+                    <View>
+                      <Text style={styles.modalPlayerName}>{item.name}</Text>
+                      <Text style={styles.modalPlayerMeta}>{item.position} • DOB: {item.dateOfBirth}</Text>
+                    </View>
+                    <Ionicons name="checkmark-circle-outline" size={20} color={Colors.primary} />
+                  </TouchableOpacity>
+                )}
+              />
+            )}
+
+            <TouchableOpacity style={styles.modalCloseBtn} onPress={() => setShowPlayerPickerModal(false)}>
+              <Text style={styles.modalCloseText}>Cancel</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -876,14 +1024,15 @@ const styles = StyleSheet.create({
   profileImage: { width: 76, height: 76, borderRadius: 38 },
   row: { flexDirection: 'row', justifyContent: 'space-between', gap: 8 },
   halfCol: { flex: 1 },
-  positionGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 6, marginBottom: 10 },
-  posOption: { paddingVertical: 8, paddingHorizontal: 12, borderRadius: 8, backgroundColor: '#F3F4F6', borderWidth: 1, borderColor: Colors.border },
-  posOptionActive: { backgroundColor: Colors.primary, borderColor: Colors.primary },
-  posOptionText: { fontSize: 12, fontWeight: 'bold', color: Colors.textSecondary },
-  posOptionTextActive: { color: '#FFF' },
   label: { fontSize: 13, fontWeight: '600', marginTop: 8, color: Colors.textSecondary },
   input: { backgroundColor: '#F9FAFB', borderWidth: 1, borderColor: Colors.border, borderRadius: 8, paddingHorizontal: 12, paddingVertical: 10, marginTop: 4, marginBottom: 8, fontSize: 14 },
+  dropdownSelector: { backgroundColor: '#F9FAFB', borderWidth: 1, borderColor: Colors.border, borderRadius: 8, paddingHorizontal: 12, paddingVertical: 12, marginTop: 4, marginBottom: 8, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  dropdownSelectorText: { fontSize: 14, color: Colors.textPrimary, fontWeight: '600' },
+  
   matrixRow: { marginBottom: 14, backgroundColor: '#F9FAFB', padding: 10, borderRadius: 8, borderWidth: 1, borderColor: Colors.border },
+  matrixRowUnreviewed: { borderColor: '#F59E0B', backgroundColor: '#FFFBEB' },
+  unreviewedPill: { backgroundColor: '#FEF3C7', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4 },
+  unreviewedPillText: { fontSize: 9, fontWeight: 'bold', color: '#B45309' },
   matrixHeaderRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 },
   matrixAttrLabel: { fontSize: 14, fontWeight: 'bold', color: Colors.textPrimary },
   matrixSelectedBadge: { fontSize: 11, fontWeight: 'bold', color: Colors.primary },
@@ -912,5 +1061,18 @@ const styles = StyleSheet.create({
   statusTitle: { fontWeight: 'bold', color: Colors.warningText, fontSize: 14 },
   statusSub: { fontSize: 11, color: Colors.warningText, marginTop: 2 },
   syncBtn: { backgroundColor: Colors.warningText, paddingHorizontal: 16, paddingVertical: 10, borderRadius: 8 },
-  syncBtnText: { color: '#FFF', fontWeight: 'bold', fontSize: 13 }
+  syncBtnText: { color: '#FFF', fontWeight: 'bold', fontSize: 13 },
+  
+  modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' },
+  modalContent: { backgroundColor: '#FFF', borderTopLeftRadius: 20, borderTopRightRadius: 20, padding: 20, maxHeight: '80%' },
+  modalTitle: { fontSize: 18, fontWeight: 'bold', color: Colors.textPrimary, marginBottom: 6 },
+  modalSub: { fontSize: 12, color: Colors.textSecondary, marginBottom: 10 },
+  modalCatHeader: { fontSize: 11, fontWeight: 'bold', color: Colors.primary, marginTop: 8, marginBottom: 4 },
+  modalPositionItem: { paddingVertical: 12, paddingHorizontal: 10, borderBottomWidth: 1, borderBottomColor: '#F3F4F6' },
+  modalPositionText: { fontSize: 14, fontWeight: '600', color: Colors.textPrimary },
+  modalPlayerItem: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: '#F3F4F6' },
+  modalPlayerName: { fontSize: 15, fontWeight: 'bold', color: Colors.textPrimary },
+  modalPlayerMeta: { fontSize: 11, color: Colors.textSecondary, marginTop: 2 },
+  modalCloseBtn: { marginTop: 15, padding: 12, backgroundColor: Colors.danger, borderRadius: 8, alignItems: 'center' },
+  modalCloseText: { color: '#FFF', fontWeight: 'bold' }
 });

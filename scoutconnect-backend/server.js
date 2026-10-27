@@ -1,7 +1,7 @@
 // server.js
 const express = require('express');
 const cors = require('cors');
-const jwt = require('jsonwebtoken'); // Kept to verify Supabase JWTs locally
+const jwt = require('jsonwebtoken'); 
 const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
@@ -14,10 +14,14 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-// Your Supabase Project JWT Secret
+// --- GLOBAL REQUEST LOGGER ---
+app.use((req, res, next) => {
+  console.log(`[${new Date().toISOString()}] Incoming Request: ${req.method} ${req.url}`);
+  next();
+});
+
 const SUPABASE_JWT_SECRET = process.env.SUPABASE_JWT_SECRET || 'your-supabase-jwt-secret';
 
-// --- CLOUD STORAGE MOCK (MULTER SETUP) ---
 const uploadDir = path.join(__dirname, 'uploads');
 if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir);
 
@@ -28,27 +32,33 @@ const storage = multer.diskStorage({
 const upload = multer({ storage });
 app.use('/uploads', express.static(uploadDir));
 
-// --- SUPABASE AUTHENTICATION MIDDLEWARE ---
+// --- SUPABASE AUTHENTICATION MIDDLEWARE WITH ERROR LOGGING ---
 const authenticateToken = async (req, res, next) => {
   const authHeader = req.headers['authorization'];
   const token = authHeader && authHeader.split(' ')[1];
   
-  if (!token) return res.status(401).json({ error: 'Access token required.' });
+  if (!token) {
+    console.log(`❌ Auth Blocked: Missing token for ${req.url}`);
+    return res.status(401).json({ error: 'Access token required.' });
+  }
   
   try {
     const decoded = jwt.verify(token, SUPABASE_JWT_SECRET);
-    // Supabase stores the user UUID in the 'sub' claim
     const userRecord = await User.findByPk(decoded.sub);
-    if (!userRecord) return res.status(404).json({ error: 'User profile not found in Postgres.' });
+    
+    if (!userRecord) {
+      console.log(`❌ Auth Blocked: Token valid, but UUID ${decoded.sub} missing in Postgres DB.`);
+      return res.status(404).json({ error: 'User profile not found in Postgres.' });
+    }
     
     req.user = userRecord;
     next();
   } catch (err) {
+    console.log(`❌ Auth Blocked: JWT verification failed for ${req.url}. Reason: ${err.message}`);
     return res.status(403).json({ error: 'Invalid or expired token.' });
   }
 };
 
-// --- PUBLIC ROUTE: GET ALL CLUBS FOR REGISTRATION ---
 app.get('/api/clubs/public', async (req, res) => {
   try {
     const clubs = await Club.findAll({ 
@@ -62,7 +72,6 @@ app.get('/api/clubs/public', async (req, res) => {
   }
 });
 
-// --- PROFILE SYNC (Called immediately after Supabase Sign-Up) ---
 app.post('/api/auth/sync-profile', async (req, res) => {
   const { id, username, email, phone, role, clubId, newClubName, newClubRegion } = req.body;
   try {
@@ -84,7 +93,7 @@ app.post('/api/auth/sync-profile', async (req, res) => {
     }
 
     const user = await User.create({ 
-      id, // Pass exactly the UUID Supabase created
+      id, 
       username: username.trim(), 
       email: email.toLowerCase().trim(),
       phone: phone || null,
@@ -99,14 +108,12 @@ app.post('/api/auth/sync-profile', async (req, res) => {
   }
 });
 
-// --- MEDIA UPLOAD ENDPOINT ---
 app.post('/api/upload', authenticateToken, upload.single('media'), (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'No file uploaded.' });
   const fileUrl = `${req.protocol}://${req.get('host')}/uploads/${req.file.filename}`;
   res.status(200).json({ url: fileUrl });
 });
 
-// --- SMART CONFLICT RESOLUTION (SYNC WITH DIGITAL SIGNATURE & CHECKLIST) ---
 app.post('/api/sync', authenticateToken, async (req, res) => {
   const { records, matchStats, achievements } = req.body;
   const clubId = req.user.clubId; 
@@ -199,7 +206,6 @@ app.post('/api/sync', authenticateToken, async (req, res) => {
   }
 });
 
-// --- COMMUNITY REPORTING / FLAGGING ENDPOINT ---
 app.post('/api/flags', authenticateToken, async (req, res) => {
   const { playerId, reason } = req.body;
   const reporterId = req.user.id;
@@ -229,7 +235,6 @@ app.post('/api/flags', authenticateToken, async (req, res) => {
   }
 });
 
-// --- GET MULTIPLE PLAYERS (DISCOVER UI) ---
 app.get('/api/players', authenticateToken, async (req, res) => {
   const { evalType, position, page = 1, limit = 5 } = req.query; 
   const offset = (page - 1) * limit;
@@ -255,7 +260,6 @@ app.get('/api/players', authenticateToken, async (req, res) => {
   }
 });
 
-// --- GET SINGLE PLAYER BY ID (DRILL-DOWN UI) ---
 app.get('/api/players/:id', authenticateToken, async (req, res) => {
   try {
     const player = await Player.findByPk(req.params.id, {
@@ -274,7 +278,6 @@ app.get('/api/players/:id', authenticateToken, async (req, res) => {
   }
 });
 
-// --- SHORTLIST LOGIC ---
 app.post('/api/shortlist', authenticateToken, async (req, res) => {
   const { playerId, notes } = req.body;
   const scoutId = req.user.id; 
@@ -312,13 +315,11 @@ app.delete('/api/shortlist/:id', authenticateToken, async (req, res) => {
   }
 });
 
-// --- CLUB ENDPOINTS ---
 app.get('/api/club', authenticateToken, async (req, res) => {
   try {
     const club = await Club.findByPk(req.user.clubId);
     if (!club) return res.status(404).json({ error: 'Club not found.' });
     const playerCount = await Player.count({ where: { currentClubId: req.user.clubId } });
-    // Return both the club data AND the newly appended email/phone from req.user
     res.status(200).json({ club, playerCount, coachProfile: req.user });
   } catch (error) {
     res.status(500).json({ error: 'Failed to fetch club information.' });

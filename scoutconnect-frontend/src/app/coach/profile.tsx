@@ -34,7 +34,9 @@ export default function CoachProfileScreen() {
   const router = useRouter();
 
   const [club, setClub] = useState<ClubInfo | null>(null);
-  const [coachProfile, setCoachProfile] = useState<any>(null);
+  const [coachDisplayName, setCoachDisplayName] = useState<string>('Loading Profile...');
+  const [coachEmail, setCoachEmail] = useState<string>('');
+  
   const [playerCount, setPlayerCount] = useState<number>(0);
   const [draftCount, setDraftCount] = useState<number>(0);
   const [pendingSyncCount, setPendingSyncCount] = useState<number>(0);
@@ -57,6 +59,17 @@ export default function CoachProfileScreen() {
       setDraftCount(drafts.length);
       setPendingSyncCount(evals.length + stats.length + achs.length);
 
+      // Force a direct fetch from the secure Supabase Session to override fallbacks
+      const { data: { session } } = await supabase.auth.getSession();
+      
+      let fallbackEmail = 'coach@scoutconnect.rw';
+      let fallbackName = 'Academy Coach';
+
+      if (session?.user) {
+        fallbackEmail = session.user.email || fallbackEmail;
+        fallbackName = session.user.user_metadata?.username || fallbackEmail.split('@')[0] || fallbackName;
+      }
+
       const token = await SecureStore.getItemAsync('userToken');
       if (token) {
         const response = await fetch(`${API_BASE}/club`, {
@@ -66,11 +79,19 @@ export default function CoachProfileScreen() {
           const data = await response.json();
           setClub(data.club);
           setPlayerCount(data.playerCount || 0);
-          setCoachProfile(data.coachProfile);
+          
+          // Use the DB's profile if it exists, otherwise use the Supabase token we extracted above
+          const dbName = data.coachProfile?.username;
+          const dbEmail = data.coachProfile?.email;
+          setCoachDisplayName(dbName || fallbackName);
+          setCoachEmail(dbEmail || fallbackEmail);
+        } else {
+          setCoachDisplayName(fallbackName);
+          setCoachEmail(fallbackEmail);
         }
       }
     } catch (error) {
-      console.log('Profile fetch note (offline or unlinked):', error);
+      console.log('Profile fetch note:', error);
     } finally {
       setLoading(false);
     }
@@ -103,7 +124,6 @@ export default function CoachProfileScreen() {
     <SafeAreaView style={styles.container}>
       <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 30 }}>
         
-        {/* Top Status Banner */}
         <View style={styles.topBanner}>
           <View style={styles.rowCenter}>
             <Ionicons name="shield-checkmark" size={14} color={Colors.warningText} />
@@ -117,7 +137,6 @@ export default function CoachProfileScreen() {
 
         <Text style={styles.header}>Coach Profile</Text>
 
-        {/* Hero Identity Card */}
         <View style={styles.heroCard}>
           <View style={styles.heroTopRow}>
             <View style={styles.avatarCircle}>
@@ -125,7 +144,7 @@ export default function CoachProfileScreen() {
             </View>
             <View style={{ flex: 1, marginLeft: 14 }}>
               <View style={styles.rowCenter}>
-                <Text style={styles.heroTitle}>{coachProfile?.username || 'Academy Coach'}</Text>
+                <Text style={styles.heroTitle}>{coachDisplayName}</Text>
                 <Ionicons 
                   name={club?.isVerified ? "checkmark-circle" : "time-outline"} 
                   size={16} 
@@ -160,12 +179,11 @@ export default function CoachProfileScreen() {
           </View>
         </View>
 
-        {/* Accountability & Standing Card */}
         <View style={styles.card}>
           <View style={styles.cardHeaderRow}>
             <View style={styles.rowCenter}>
               <Ionicons name="ribbon-outline" size={18} color={Colors.primary} />
-              <Text style={styles.sectionTitle}>Academy Accountability Standing</Text>
+              <Text style={styles.sectionTitle}>Trust Score & Standing Calculation</Text>
             </View>
             <View style={[styles.statusPill, standing === 'Good' ? styles.statusGood : styles.statusPenalized]}>
               <Text style={[styles.statusPillText, standing === 'Good' ? { color: Colors.primary } : { color: Colors.danger }]}>
@@ -174,11 +192,10 @@ export default function CoachProfileScreen() {
             </View>
           </View>
           <Text style={styles.sectionDesc}>
-            Every player evaluation synced from your device is signed with an HMAC SHA-256 digital signature tied to your credentials. Maintaining accurate telemetry preserves your academy's regional trust score.
+            Trust scores begin at 100%. They are dynamically calculated based on HMAC SHA-256 cryptographic signature verification consistency, frequency of successful pitchside syncs, and negative penalties if player profiles receive valid community audit flags.
           </Text>
         </View>
 
-        {/* Local SQLite Storage Summary Card */}
         <View style={styles.card}>
           <View style={styles.cardHeaderRow}>
             <View style={styles.rowCenter}>
@@ -207,7 +224,6 @@ export default function CoachProfileScreen() {
           </TouchableOpacity>
         </View>
 
-        {/* Settings & Support Menu */}
         <View style={styles.menuCard}>
           <TouchableOpacity style={styles.menuRow} onPress={() => setActiveModal('account')}>
             <View style={styles.rowCenter}>
@@ -230,8 +246,8 @@ export default function CoachProfileScreen() {
                 <Ionicons name="help-buoy-outline" size={18} color={Colors.secondary} />
               </View>
               <View>
-                <Text style={styles.menuItemTitle}>Help & Pitchside Support</Text>
-                <Text style={styles.menuItemSub}>Offline sync guide & regional hub desk</Text>
+                <Text style={styles.menuItemTitle}>Academy vs Club Decision & Workflow</Text>
+                <Text style={styles.menuItemSub}>Verification workflow & decision rules</Text>
               </View>
             </View>
             <Ionicons name="chevron-forward" size={18} color={Colors.textSecondary} />
@@ -258,33 +274,36 @@ export default function CoachProfileScreen() {
                   <Text style={styles.modalTitle}>My Contact & Academy Details</Text>
                 </View>
                 <View style={styles.infoList}>
-                  <Text style={styles.infoLabel}>My Registered Email</Text>
-                  <Text style={styles.infoVal}>{coachProfile?.email || 'Not provided'}</Text>
+                  <Text style={styles.infoLabel}>Coach Name</Text>
+                  <Text style={styles.infoVal}>{coachDisplayName}</Text>
 
-                  <Text style={styles.infoLabel}>My Phone Number</Text>
-                  <Text style={styles.infoVal}>{coachProfile?.phone || 'Not provided'}</Text>
+                  <Text style={styles.infoLabel}>Registered Email</Text>
+                  <Text style={styles.infoVal}>{coachEmail}</Text>
 
                   <Text style={styles.infoLabel}>Assigned Club / Academy</Text>
-                  <Text style={styles.infoVal}>{club?.name || 'Synced on next connection'}</Text>
+                  <Text style={styles.infoVal}>{club?.name || 'Provisional Academy'}</Text>
 
                   <Text style={styles.infoLabel}>Regional Hub</Text>
                   <Text style={styles.infoVal}>{club?.region || 'Kigali'}</Text>
+
+                  <Text style={styles.infoLabel}>Verification Status</Text>
+                  <Text style={styles.infoVal}>{club?.isVerified ? 'Verified Club' : 'Provisional (Pending Regional Audit)'}</Text>
                 </View>
               </>
             ) : (
               <>
                 <View style={styles.rowCenter}>
                   <Ionicons name="help-circle-outline" size={20} color={Colors.secondary} />
-                  <Text style={styles.modalTitle}>Help & Pitchside Support</Text>
+                  <Text style={styles.modalTitle}>Academy vs Club & Verification Workflow</Text>
                 </View>
                 <Text style={styles.supportParagraph}>
-                  • <Text style={{ fontWeight: 'bold' }}>Staged Evaluations:</Text> Use "Save Draft" during live matches to store incomplete checklists locally. Drafts will not sync to scouts until you submit Stage 5.
+                  • <Text style={{ fontWeight: 'bold' }}>Decision Process (Academy vs Club):</Text> A <Text style={{ fontStyle: 'italic' }}>Provisional Academy</Text> is created when a grassroots coach registers a new, unregistered local training hub. An established <Text style={{ fontStyle: 'italic' }}>Club</Text> refers to officially registered regional league or varsity teams with formal institutional backing.
                 </Text>
                 <Text style={styles.supportParagraph}>
-                  • <Text style={{ fontWeight: 'bold' }}>Conflict Resolution:</Text> When multiple coaches evaluate the same player offline, the cloud server merges evaluations chronologically and preserves your cryptographic signature.
-                </Text>
-                <Text style={styles.supportParagraph}>
-                  • <Text style={{ fontWeight: 'bold' }}>Regional Hub Desk:</Text> Contact support@scoutconnect.rw for academy verification inquiries.
+                  • <Text style={{ fontWeight: 'bold' }}>Verification Workflow:</Text> 
+                  1. Coach registers and creates a provisional academy profile.{'\n'}
+                  2. Regional Hub admins audit contact details and pitch-side telemetry.{'\n'}
+                  3. Upon validation, the academy is upgraded to "Verified Club" status in the database, unlocking priority scout visibility.
                 </Text>
               </>
             )}

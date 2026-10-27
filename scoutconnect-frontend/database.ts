@@ -1,9 +1,9 @@
-// database.js
+// database.ts
 import * as SQLite from 'expo-sqlite';
 
 const db = SQLite.openDatabaseSync('scoutconnect_offline.db');
 
-export const initDB = async () => {
+export const initDB = async (): Promise<void> => {
   await db.execAsync(`
     CREATE TABLE IF NOT EXISTS OfflineEvaluations (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -65,19 +65,19 @@ export const initDB = async () => {
 
 // --- SAVE & UPDATE EVALUATION FUNCTIONS (SUPPORTS STAGED DRAFTS) ---
 export const saveEvaluationLocally = async (
-  playerName,
-  dateOfBirth,
-  profilePhoto,
-  sprintSpeed,
-  dribblingScore,
-  workRate,
-  evalType,
-  position = 'Forward',
-  checklistJson = null,
-  currentStage = 1,
-  isDraft = 0,
-  existingDraftId = null
-) => {
+  playerName: string,
+  dateOfBirth: string,
+  profilePhoto: string | null,
+  sprintSpeed: number,
+  dribblingScore: number,
+  workRate: string,
+  evalType: string,
+  position: string = 'Forward',
+  checklistJson: string | null = null,
+  currentStage: number = 1,
+  isDraft: number = 0,
+  existingDraftId: number | null = null
+): Promise<number> => {
   const timestamp = new Date().toISOString();
 
   if (existingDraftId) {
@@ -98,18 +98,33 @@ export const saveEvaluationLocally = async (
   }
 };
 
-export const deleteEvaluationDraft = async (id) => {
+export const deleteEvaluationDraft = async (id: number): Promise<void> => {
   await db.runAsync(`DELETE FROM OfflineEvaluations WHERE id = ?`, [id]);
 };
 
-export const saveMatchStatLocally = async (playerName, dateOfBirth, competition, matchDate, opponent, matchResult, goals, assists, minutesPlayed) => {
+export const saveMatchStatLocally = async (
+  playerName: string, 
+  dateOfBirth: string, 
+  competition: string, 
+  matchDate: string, 
+  opponent: string, 
+  matchResult: string, 
+  goals: number, 
+  assists: number, 
+  minutesPlayed: number
+): Promise<void> => {
   await db.runAsync(
     `INSERT INTO OfflineMatchStats (playerName, dateOfBirth, competition, matchDate, opponent, matchResult, goals, assists, minutesPlayed) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [playerName, dateOfBirth, competition, matchDate, opponent, matchResult, goals, assists, minutesPlayed]
   );
 };
 
-export const saveAchievementLocally = async (playerName, dateOfBirth, title, year) => {
+export const saveAchievementLocally = async (
+  playerName: string, 
+  dateOfBirth: string, 
+  title: string, 
+  year: number
+): Promise<void> => {
   await db.runAsync(
     `INSERT INTO OfflineAchievements (playerName, dateOfBirth, title, year) VALUES (?, ?, ?, ?)`,
     [playerName, dateOfBirth, title, year]
@@ -117,32 +132,32 @@ export const saveAchievementLocally = async (playerName, dateOfBirth, title, yea
 };
 
 // --- FETCH DRAFTS & UNSYNCED FUNCTIONS ---
-export const getDraftEvaluations = async () =>
+export const getDraftEvaluations = async (): Promise<any[]> =>
   await db.getAllAsync(`SELECT * FROM OfflineEvaluations WHERE isDraft = 1 AND synced = 0 ORDER BY timestamp DESC;`);
 
-export const getUnsyncedEvaluations = async () =>
+export const getUnsyncedEvaluations = async (): Promise<any[]> =>
   await db.getAllAsync(`SELECT * FROM OfflineEvaluations WHERE isDraft = 0 AND synced = 0 ORDER BY timestamp DESC;`);
 
-export const getUnsyncedMatchStats = async () =>
+export const getUnsyncedMatchStats = async (): Promise<any[]> =>
   await db.getAllAsync(`SELECT * FROM OfflineMatchStats WHERE synced = 0;`);
 
-export const getUnsyncedAchievements = async () =>
+export const getUnsyncedAchievements = async (): Promise<any[]> =>
   await db.getAllAsync(`SELECT * FROM OfflineAchievements WHERE synced = 0;`);
 
 // --- SYNC UPDATE FUNCTIONS ---
-export const markEvaluationsAsSynced = async (ids) => {
+export const markEvaluationsAsSynced = async (ids: number[]): Promise<void> => {
   if (!ids || ids.length === 0) return;
   const placeholders = ids.map(() => '?').join(',');
   await db.runAsync(`UPDATE OfflineEvaluations SET synced = 1 WHERE id IN (${placeholders})`, ...ids);
 };
 
-export const markMatchStatsAsSynced = async (ids) => {
+export const markMatchStatsAsSynced = async (ids: number[]): Promise<void> => {
   if (!ids || ids.length === 0) return;
   const placeholders = ids.map(() => '?').join(',');
   await db.runAsync(`UPDATE OfflineMatchStats SET synced = 1 WHERE id IN (${placeholders})`, ...ids);
 };
 
-export const markAchievementsAsSynced = async (ids) => {
+export const markAchievementsAsSynced = async (ids: number[]): Promise<void> => {
   if (!ids || ids.length === 0) return;
   const placeholders = ids.map(() => '?').join(',');
   await db.runAsync(`UPDATE OfflineAchievements SET synced = 1 WHERE id IN (${placeholders})`, ...ids);
