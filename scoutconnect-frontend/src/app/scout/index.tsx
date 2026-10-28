@@ -1,11 +1,15 @@
 // src/app/scout/index.tsx
-import React, { useEffect, useState } from 'react';
-import { View, Text, FlatList, StyleSheet, TextInput, TouchableOpacity, RefreshControl, Alert, Dimensions, Image, ActivityIndicator, Modal, ScrollView } from 'react-native';
+import React, { useEffect, useRef, useState } from 'react';
+import { View, Text, FlatList, StyleSheet, TextInput, TouchableOpacity, RefreshControl, Alert, Dimensions, Image, ActivityIndicator, Modal, ScrollView, Switch } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { getAuthToken } from '../../lib/supabase';
+import { apiFetch } from '../../lib/api';
+import FormSheet, { formStyles } from '../../components/FormSheet';
+import ScoutAccreditationPanel from '../../components/ScoutAccreditationPanel';
+import { pillarScores, overallScore } from '../../lib/ratings';
 import { LineChart, ProgressChart } from 'react-native-chart-kit';
 import { Ionicons } from '@expo/vector-icons';
-import { API_BASE, Colors, CardSpec } from '../../constants/designSystem';
+import { Colors, CardSpec } from '../../constants/designSystem';
+import { positionQueryFor } from '../../constants/positions';
 
 interface Evaluation {
   id?: string;
@@ -41,26 +45,37 @@ interface Achievement {
 
 interface PlayerProspect {
   id: string;
-  name: string;
+  displayName: string; // first name + surname initial until the club accepts a contact request
+  identityRevealed: boolean;
   position: string;
-  age?: number;
-  profilePhoto?: string;
+  age: number | null;
+  profilePhoto?: string | null;
   Evaluations?: Evaluation[];
   MatchStats?: MatchStat[];
   Achievements?: Achievement[];
-  Club?: { 
-    name: string; 
-    contactEmail: string; 
-    contactPhone: string; 
-  }; 
+  Club?: {
+    name: string;
+    isVerified?: boolean;
+    contactEmail?: string | null; // only present once the club has accepted
+    contactPhone?: string | null;
+  } | null;
+  contactRequest?: { id: string; status: 'Pending' | 'Accepted' | 'Declined'; responseNote: string | null; canRequestAgainAt?: string | null } | null;
 }
 
-const PLAYERS_API = `${API_BASE}/players`;
-const SHORTLIST_API = `${API_BASE}/shortlist`;
+const PAGE_SIZE = 10;
 const screenWidth = Dimensions.get('window').width - 60;
 
 const POSITIONS = ['All', 'Goalkeeper', 'Defender', 'Midfielder', 'Forward', 'Other'];
 const EVAL_TYPES = ['All', 'Checklist', 'Combine', 'Match'];
+// Must match REPORT_CATEGORIES in scoutconnect-backend/lib/reports.js
+const REPORT_CATEGORIES = ['Inaccurate stats', 'Wrong identity', 'Inappropriate photo', 'Safeguarding concern', 'Other'];
+const AGE_GROUPS: { label: string; under: number | null }[] = [
+  { label: 'Any', under: null },
+  { label: 'U13', under: 13 },
+  { label: 'U15', under: 15 },
+  { label: 'U17', under: 17 },
+  { label: 'U19', under: 19 },
+];
 
 export default function ScoutDiscoverScreen() {
   const [players, setPlayers] = useState<PlayerProspect[]>([]);
@@ -74,44 +89,65 @@ export default function ScoutDiscoverScreen() {
   const [selectedEvalSource, setSelectedEvalSource] = useState('All');
   const [minDribbling, setMinDribbling] = useState('0'); // 1-5 scale
   const [maxSprint, setMaxSprint] = useState('10');     // 30m sprint time seconds
+  const [verifiedOnly, setVerifiedOnly] = useState(false); // only athletes from admin-verified clubs
+  const [ageGroup, setAgeGroup] = useState<number | null>(null); // "under N"
+  const [notApproved, setNotApproved] = useState(false); // scout has not been accredited yet
+  const [contactTarget, setContactTarget] = useState<PlayerProspect | null>(null);
+  const [contactMessage, setContactMessage] = useState('');
+  const [sendingRequest, setSendingRequest] = useState(false);
+  const [reportTarget, setReportTarget] = useState<PlayerProspect | null>(null);
+  const [reportCategory, setReportCategory] = useState('');
+  const [reportDetails, setReportDetails] = useState('');
+  const [sendingReport, setSendingReport] = useState(false);
 
   const [refreshing, setRefreshing] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [totalItems, setTotalItems] = useState(0);
+  const [debouncedSearch, setDebouncedSearch] = useState('');
+  const requestId = useRef(0); // ignores responses that arrive after a newer request was made
+
+  // Search on the server after a short pause, instead of only among the athletes already on screen.
+  useEffect(() => {
+    const timer = setTimeout(() => setDebouncedSearch(searchQuery.trim()), 400);
+    return () => clearTimeout(timer);
+  }, [searchQuery]);
 
   useEffect(() => {
-    fetchPlayers(1, true);
-  }, [selectedPosition, selectedEvalSource]);
+    setLoading(true);
+    fetchPlayers(1, true).finally(() => setLoading(false));
+  }, [selectedPosition, selectedEvalSource, verifiedOnly, ageGroup, debouncedSearch]);
 
   const fetchPlayers = async (pageNum: number, reset: boolean = false) => {
+    const id = ++requestId.current;
+    let query = `page=${pageNum}&limit=${PAGE_SIZE}`;
+    if (debouncedSearch) query += `&search=${encodeURIComponent(debouncedSearch)}`;
+    const positionQuery = positionQueryFor(selectedPosition);
+    if (positionQuery) query += `&${positionQuery}`;
+    if (selectedEvalSource !== 'All') query += `&evalType=${encodeURIComponent(selectedEvalSource)}`;
+    if (verifiedOnly) query += '&verifiedOnly=true';
+    if (ageGroup) query += `&under=${ageGroup}`;
+
     try {
-      const token = await getAuthToken();
-      let queryURL = `${PLAYERS_API}?page=${pageNum}&limit=5`;
-      
-      if (selectedPosition !== 'All') {
-        queryURL += `&position=${selectedPosition}`;
+      const data = await apiFetch(`/players?${query}`);
+      if (id !== requestId.current) return;
+      const list = Array.isArray(data) ? data : data?.players;
+      if (!Array.isArray(list)) throw new Error('Unexpected response from the server.');
+
+      setPlayers((prev) => (reset || pageNum === 1 ? list : [...prev, ...list]));
+      setTotalPages(data.totalPages || 1);
+      setTotalItems(data.totalItems ?? list.length);
+      setPage(pageNum);
+      setError(null);
+      setNotApproved(false);
+    } catch (e: any) {
+      if (id !== requestId.current) return;
+      if (e?.code === 'SCOUT_NOT_APPROVED') {
+        setNotApproved(true);
+        return;
       }
-      if (selectedEvalSource !== 'All') {
-        queryURL += `&evalType=${selectedEvalSource}`;
-      }
-      
-      const response = await fetch(queryURL, {
-        headers: { 'Authorization': `Bearer ${token}` }
-      });
-      
-      const data = await response.json();
-      
-      if (response.ok) {
-        const fetchedList = data.players || data;
-        if (reset || pageNum === 1) {
-          setPlayers(fetchedList); 
-        } else {
-          setPlayers(prev => [...prev, ...fetchedList]); 
-        }
-        setTotalPages(data.totalPages || 1);
-        setPage(pageNum);
-      }
-    } catch (error) {
-      console.error('Error fetching players:', error);
+      setError(e?.message || 'Could not load athletes.');
     } finally {
       setLoadingMore(false);
     }
@@ -125,39 +161,80 @@ export default function ScoutDiscoverScreen() {
 
   const handleShortlist = async (playerId: string, playerName: string) => {
     try {
-      const token = await getAuthToken();
-      const response = await fetch(SHORTLIST_API, {
-        method: 'POST',
-        headers: { 
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}` 
-        },
-        body: JSON.stringify({ playerId, notes: 'Potential recruit from discover hub' })
-      });
-
-      const data = await response.json();
-      if (response.ok) {
-        Alert.alert('Success', `${playerName} has been added to your shortlist.`);
-      } else {
-        Alert.alert('Notice', data.error || 'Player already in shortlist.');
-      }
-    } catch (error) {
-      Alert.alert('Error', 'Could not connect to shortlist service.');
+      await apiFetch('/shortlist', { method: 'POST', body: { playerId, notes: '' } });
+      Alert.alert('Added', `${playerName} has been added to your shortlist.`);
+    } catch (e: any) {
+      Alert.alert('Could not add to shortlist', e?.message || String(e));
     }
+  };
+
+  const sendContactRequest = async () => {
+    if (!contactTarget) return;
+    if (contactMessage.trim().length < 10) {
+      Alert.alert('Add a short message', 'Tell the club why you would like to contact them (at least 10 characters).');
+      return;
+    }
+    setSendingRequest(true);
+    try {
+      await apiFetch('/contact-requests', { method: 'POST', body: { playerId: contactTarget.id, message: contactMessage } });
+      const sentTo = contactTarget.id;
+      setPlayers((prev) => prev.map((p) => (p.id === sentTo ? { ...p, contactRequest: { id: 'new', status: 'Pending', responseNote: null } } : p)));
+      setContactTarget(null);
+      Alert.alert('Request sent', "The club's owner will be told. Their answer appears in your Requests tab.");
+    } catch (e: any) {
+      Alert.alert('Could not send your request', e?.message || String(e));
+    } finally {
+      setSendingRequest(false);
+    }
+  };
+
+  const sendReport = async () => {
+    if (!reportTarget) return;
+    if (!reportCategory) return Alert.alert('Choose a category', 'Tell us what kind of problem this is.');
+    if (reportDetails.trim().length < 5) return Alert.alert('Add a few details', 'Describe the problem in a few words.');
+    setSendingReport(true);
+    try {
+      await apiFetch('/flags', { method: 'POST', body: { playerId: reportTarget.id, category: reportCategory, details: reportDetails } });
+      setReportTarget(null);
+      Alert.alert('Thank you', 'An administrator will review your report.');
+    } catch (e: any) {
+      Alert.alert('Could not send your report', e?.message || String(e));
+    } finally {
+      setSendingReport(false);
+    }
+  };
+
+  const renderContactAction = (item: PlayerProspect) => {
+    const status = item.contactRequest?.status;
+    if (status === 'Accepted') return <Text style={styles.contactNote}>The club accepted your request. Their details are shown above.</Text>;
+    if (status === 'Pending') return <Text style={styles.contactNote}>Request sent. Waiting for the club to answer.</Text>;
+    const askAgainAt = item.contactRequest?.canRequestAgainAt ? new Date(item.contactRequest.canRequestAgainAt) : null;
+    const waiting = askAgainAt !== null && askAgainAt > new Date();
+    return (
+      <>
+        {status === 'Declined' && (
+          <Text style={styles.contactNote}>
+            The club declined your last request{item.contactRequest?.responseNote ? `: ${item.contactRequest.responseNote}` : '.'}
+            {waiting ? ` You can ask again on ${askAgainAt!.toLocaleDateString()}.` : ''}
+          </Text>
+        )}
+        {!waiting && <TouchableOpacity
+          style={styles.requestBtn}
+          onPress={() => { setContactMessage(''); setContactTarget(item); }}
+          accessibilityRole="button"
+          accessibilityLabel={`Request contact about ${item.displayName}`}
+        >
+          <Ionicons name="mail-outline" size={15} color={Colors.secondary} />
+          <Text style={styles.requestBtnText}>Request contact</Text>
+        </TouchableOpacity>}
+      </>
+    );
   };
 
   // Advanced client-side attribute filtering (Name, Dribbling threshold, Sprint threshold)
   const filteredPlayers = players.filter(p => {
     if (!p.Evaluations || p.Evaluations.length === 0) return false;
     const latestEval = p.Evaluations[p.Evaluations.length - 1];
-
-    // Name / Position keyword search
-    if (searchQuery.trim()) {
-      const q = searchQuery.toLowerCase();
-      const matchesName = p.name.toLowerCase().includes(q);
-      const matchesPos = p.position.toLowerCase().includes(q);
-      if (!matchesName && !matchesPos) return false;
-    }
 
     // Minimum Dribbling / Ball Control Filter (1-5)
     const minDribNum = parseFloat(minDribbling) || 0;
@@ -174,21 +251,31 @@ export default function ScoutDiscoverScreen() {
     return true;
   });
 
+  // The score filters run on the phone, and athletes without an evaluation are hidden, so one page can show nobody:
+  // keep loading pages until a few show or there are no more.
+  useEffect(() => {
+    if (filteredPlayers.length < 3 && page < totalPages && !loading && !loadingMore && !error) {
+      setLoadingMore(true);
+      fetchPlayers(page + 1);
+    }
+  }, [players, minDribbling, maxSprint, page, totalPages, loading]);
+
   const activeFiltersCount = (selectedPosition !== 'All' ? 1 : 0) + 
                              (selectedEvalSource !== 'All' ? 1 : 0) + 
                              (parseFloat(minDribbling) > 0 ? 1 : 0) + 
-                             (parseFloat(maxSprint) < 10 ? 1 : 0);
+                             (parseFloat(maxSprint) < 10 ? 1 : 0) +
+                             (verifiedOnly ? 1 : 0) +
+                             (ageGroup ? 1 : 0);
 
   const renderPlayer = ({ item }: { item: PlayerProspect }) => {
     const latestEval = item.Evaluations![item.Evaluations!.length - 1];
-    const avgs = latestEval.checklistData?.averages;
-    const physicalScore = avgs?.physical ? avgs.physical / 4 : (latestEval.sprintSpeed ? Math.min(latestEval.sprintSpeed / 10, 1) : 0.5); 
-    const techScore = avgs?.technical ? avgs.technical / 4 : (latestEval.dribblingScore ? latestEval.dribblingScore / 5 : 0.5);
-    const tacScore = avgs?.tactical ? avgs.tactical / 4 : 0.8;
-    
+    const scores = pillarScores(latestEval);
+    const ovrRating = overallScore(scores); // null when the coach rated nothing: shown as N/A, never invented
+    const hasUnrated = scores.physical === null || scores.technical === null || scores.tactical === null;
+
     const ringChartData = {
       labels: ["Physical", "Technical", "Tactical"],
-      data: [physicalScore, techScore, tacScore] 
+      data: [scores.physical ?? 0, scores.technical ?? 0, scores.tactical ?? 0]
     };
 
     const historyLabels = item.Evaluations!.map((_, index) => `E${index + 1}`);
@@ -199,8 +286,6 @@ export default function ScoutDiscoverScreen() {
       datasets: [{ data: historyData.length > 0 ? historyData : [0] }]
     };
 
-    const ovrRating = Math.round(((techScore + physicalScore + tacScore) / 3) * 100);
-
     return (
       <View style={styles.card}>
         <View style={styles.cardHeader}>
@@ -208,21 +293,24 @@ export default function ScoutDiscoverScreen() {
             <Image source={{ uri: item.profilePhoto }} style={styles.profileImage} />
           ) : (
             <View style={styles.imagePlaceholder}>
-              <Text style={styles.imagePlaceholderText}>{item.name.charAt(0).toUpperCase()}</Text>
+              <Text style={styles.imagePlaceholderText}>{item.displayName.charAt(0).toUpperCase()}</Text>
             </View>
           )}
           
           <View style={styles.headerInfo}>
-            <Text style={styles.name}>{item.name}</Text>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+              <Text style={styles.name}>{item.displayName}</Text>
+              {item.Club?.isVerified && <Ionicons name="checkmark-circle" size={16} color={Colors.primary} accessibilityLabel="Verified club" />}
+            </View>
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 2 }}>
               <Ionicons name="football-outline" size={12} color={Colors.textSecondary} />
-              <Text style={styles.detail}>{item.position || 'Forward (CF)'}</Text>
+              <Text style={styles.detail}>{item.position || 'Position not set'}{item.age != null ? ` · ${item.age} yrs` : ''}</Text>
             </View>
           </View>
 
           <View style={styles.ovrBadge}>
             <Text style={styles.ovrLabel}>OVR</Text>
-            <Text style={styles.ovrValue}>{ovrRating}</Text>
+            <Text style={styles.ovrValue}>{ovrRating ?? 'N/A'}</Text>
           </View>
         </View>
         
@@ -237,6 +325,7 @@ export default function ScoutDiscoverScreen() {
           hideLegend={false}
           style={styles.chart}
         />
+        {hasUnrated && <Text style={styles.unratedNote}>Empty rings were not rated by the coach.</Text>}
 
         {historyData.length > 1 && (
           <>
@@ -285,32 +374,62 @@ export default function ScoutDiscoverScreen() {
         {item.Club && (
           <View style={styles.contactSection}>
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginBottom: 4 }}>
-              <Ionicons name="shield-checkmark-outline" size={14} color={Colors.secondary} />
-              <Text style={styles.contactTitle}>Verified Representative: {item.Club.name}</Text>
+              <Ionicons name={item.Club.isVerified ? 'shield-checkmark' : 'shield-outline'} size={14} color={item.Club.isVerified ? Colors.primary : Colors.textSecondary} />
+              <Text style={styles.contactTitle}>
+                {item.Club.isVerified ? `Verified club: ${item.Club.name}` : `${item.Club.name} (not yet verified)`}
+              </Text>
             </View>
-            <Text style={styles.contactText}>Email: {item.Club.contactEmail || 'coach@academy.rw'}</Text>
-            <Text style={styles.contactText}>Phone: {item.Club.contactPhone || '+250 788 000 000'}</Text>
+            {item.identityRevealed && (
+              <>
+                <Text style={styles.contactText}>Email: {item.Club.contactEmail || 'Not provided'}</Text>
+                <Text style={styles.contactText}>Phone: {item.Club.contactPhone || 'Not provided'}</Text>
+              </>
+            )}
+            {renderContactAction(item)}
           </View>
         )}
 
-        <TouchableOpacity style={styles.shortlistBtn} onPress={() => handleShortlist(item.id, item.name)}>
+        <TouchableOpacity style={styles.shortlistBtn} onPress={() => handleShortlist(item.id, item.displayName)} accessibilityRole="button" accessibilityLabel={`Add ${item.displayName} to shortlist`}>
           <Ionicons name="star" size={16} color="#FFF" style={{ marginRight: 6 }} />
           <Text style={styles.shortlistText}>Add to Shortlist</Text>
+        </TouchableOpacity>
+
+        <TouchableOpacity
+          style={styles.reportLink}
+          onPress={() => { setReportCategory(''); setReportDetails(''); setReportTarget(item); }}
+          accessibilityRole="button"
+          accessibilityLabel={`Report a concern about ${item.displayName}`}
+        >
+          <Ionicons name="flag-outline" size={14} color={Colors.textSecondary} />
+          <Text style={styles.reportLinkText}>Report a concern</Text>
         </TouchableOpacity>
       </View>
     );
   };
 
+  if (notApproved) {
+    return (
+      <SafeAreaView style={styles.container}>
+        <Text style={styles.header}>Talent Discover</Text>
+        <ScoutAccreditationPanel
+          onApproved={() => {
+            setNotApproved(false);
+            setLoading(true);
+            fetchPlayers(1, true).finally(() => setLoading(false));
+          }}
+        />
+      </SafeAreaView>
+    );
+  }
+
   return (
     <SafeAreaView style={styles.container}>
-      {/* Top Hub Banner */}
       <View style={styles.topBanner}>
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-          <Ionicons name="flash" size={14} color={Colors.warningText} />
-          <Text style={styles.topBannerText}>Synced Regional Feed • Kigali Hub</Text>
-        </View>
-        <View style={styles.liveBadge}>
-          <Text style={styles.liveBadgeText}>LIVE</Text>
+          <Ionicons name="people-outline" size={14} color={Colors.warningText} />
+          <Text style={styles.topBannerText}>
+            {loading ? 'Loading athletes…' : `${totalItems} athlete${totalItems === 1 ? '' : 's'}${activeFiltersCount > 0 || debouncedSearch ? ' match your search' : ' available'}`}
+          </Text>
         </View>
       </View>
 
@@ -328,7 +447,7 @@ export default function ScoutDiscoverScreen() {
             onChangeText={setSearchQuery} 
           />
           {searchQuery.length > 0 && (
-            <TouchableOpacity onPress={() => setSearchQuery('')}>
+            <TouchableOpacity onPress={() => setSearchQuery('')} accessibilityRole="button" accessibilityLabel="Clear search">
               <Ionicons name="close-circle" size={18} color="#9CA3AF" />
             </TouchableOpacity>
           )}
@@ -337,6 +456,8 @@ export default function ScoutDiscoverScreen() {
         <TouchableOpacity 
           style={[styles.filterToggleBtn, activeFiltersCount > 0 && styles.filterToggleBtnActive]} 
           onPress={() => setShowFilterModal(true)}
+          accessibilityRole="button"
+          accessibilityLabel={activeFiltersCount > 0 ? `Open filters, ${activeFiltersCount} active` : 'Open filters'}
         >
           <Ionicons name="options-outline" size={18} color={activeFiltersCount > 0 ? '#FFF' : Colors.secondary} />
           {activeFiltersCount > 0 && (
@@ -353,15 +474,87 @@ export default function ScoutDiscoverScreen() {
         renderItem={renderPlayer}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
         onEndReached={() => { 
-          if (page < totalPages && !loadingMore) {
+          if (page < totalPages && !loadingMore && !loading && !error) {
             setLoadingMore(true);
             fetchPlayers(page + 1); 
           }
         }}
         onEndReachedThreshold={0.5}
-        ListEmptyComponent={<Text style={styles.empty}>No athletes found matching search criteria.</Text>}
+        ListEmptyComponent={
+          loading ? (
+            <ActivityIndicator style={{ marginTop: 40 }} size="large" color={Colors.secondary} />
+          ) : error ? (
+            <View style={styles.errorBox}>
+              <Text style={styles.errorTitle}>Couldn't load athletes</Text>
+              <Text style={styles.errorText}>{error}</Text>
+              <TouchableOpacity style={styles.retryBtn} onPress={onRefresh} accessibilityRole="button">
+                <Text style={styles.retryText}>Try again</Text>
+              </TouchableOpacity>
+            </View>
+          ) : (
+            <Text style={styles.empty}>No athletes found matching your search and filters.</Text>
+          )
+        }
         ListFooterComponent={loadingMore ? <ActivityIndicator size="small" color={Colors.secondary} style={{ marginVertical: 15 }} /> : null}
       />
+
+      <FormSheet
+        visible={contactTarget !== null}
+        title="Request contact"
+        saving={sendingRequest}
+        onCancel={() => setContactTarget(null)}
+        onSave={sendContactRequest}
+      >
+        <Text style={styles.sheetNote}>
+          The club decides whether to share {contactTarget?.displayName ?? 'the athlete'}'s full name and the club's contact details. Be clear about who you are and what you would like.
+        </Text>
+        <Text style={formStyles.label}>Your message *</Text>
+        <TextInput
+          style={[formStyles.input, { height: 110, textAlignVertical: 'top' }]}
+          value={contactMessage}
+          onChangeText={setContactMessage}
+          multiline
+          maxLength={500}
+          placeholder="e.g. I scout for … and would like to invite him to a trial."
+          placeholderTextColor="#9CA3AF"
+        />
+      </FormSheet>
+
+      <FormSheet
+        visible={reportTarget !== null}
+        title="Report a concern"
+        saving={sendingReport}
+        onCancel={() => setReportTarget(null)}
+        onSave={sendReport}
+      >
+        <Text style={styles.sheetNote}>
+          Tell an administrator if something about {reportTarget?.displayName ?? 'this profile'} looks wrong. If a child may be at risk, choose "Safeguarding concern": those reports are looked at first.
+        </Text>
+        <Text style={formStyles.label}>What is the problem? *</Text>
+        <View style={styles.reportChips}>
+          {REPORT_CATEGORIES.map((category) => (
+            <TouchableOpacity
+              key={category}
+              style={[styles.reportChip, reportCategory === category && styles.reportChipActive]}
+              onPress={() => setReportCategory(category)}
+              accessibilityRole="button"
+              accessibilityState={{ selected: reportCategory === category }}
+            >
+              <Text style={[styles.reportChipText, reportCategory === category && styles.reportChipTextActive]}>{category}</Text>
+            </TouchableOpacity>
+          ))}
+        </View>
+        <Text style={formStyles.label}>Details *</Text>
+        <TextInput
+          style={[formStyles.input, { height: 90, textAlignVertical: 'top' }]}
+          value={reportDetails}
+          onChangeText={setReportDetails}
+          multiline
+          maxLength={255}
+          placeholder="e.g. The sprint time looks impossible for his age."
+          placeholderTextColor="#9CA3AF"
+        />
+      </FormSheet>
 
       {/* Advanced Attribute Filter Modal */}
       <Modal visible={showFilterModal} animationType="slide" transparent={true}>
@@ -401,12 +594,35 @@ export default function ScoutDiscoverScreen() {
                 ))}
               </View>
 
+              <Text style={styles.filterLabel}>Age group</Text>
+              <View style={styles.dropdownGrid}>
+                {AGE_GROUPS.map((group) => (
+                  <TouchableOpacity
+                    key={group.label}
+                    style={[styles.dropdownOption, ageGroup === group.under && styles.dropdownOptionActive]}
+                    onPress={() => setAgeGroup(group.under)}
+                    accessibilityRole="button"
+                    accessibilityState={{ selected: ageGroup === group.under }}
+                  >
+                    <Text style={[styles.dropdownOptionText, ageGroup === group.under && styles.dropdownOptionTextActive]}>{group.label}</Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+
+              <View style={styles.switchRow}>
+                <View style={{ flex: 1, paddingRight: 12 }}>
+                  <Text style={[styles.filterLabel, { marginTop: 0, marginBottom: 2 }]}>Verified clubs only</Text>
+                  <Text style={styles.switchHint}>Only show athletes whose club has been reviewed and verified by an administrator.</Text>
+                </View>
+                <Switch value={verifiedOnly} onValueChange={setVerifiedOnly} trackColor={{ true: Colors.primary }} accessibilityLabel="Verified clubs only" />
+              </View>
+
               <Text style={styles.filterLabel}>Minimum Dribbling / Ball Control Score (1 - 5)</Text>
               <TextInput
                 style={styles.modalInput}
                 placeholder="e.g. 3 (leave 0 for any)"
                 placeholderTextColor="#9CA3AF"
-                keyboardDataType="numeric"
+                keyboardType="number-pad"
                 value={minDribbling}
                 onChangeText={setMinDribbling}
               />
@@ -416,7 +632,7 @@ export default function ScoutDiscoverScreen() {
                 style={styles.modalInput}
                 placeholder="e.g. 4.20 (leave 10 for any)"
                 placeholderTextColor="#9CA3AF"
-                keyboardDataType="numeric"
+                keyboardType="decimal-pad"
                 value={maxSprint}
                 onChangeText={setMaxSprint}
               />
@@ -429,6 +645,8 @@ export default function ScoutDiscoverScreen() {
                     setSelectedEvalSource('All');
                     setMinDribbling('0');
                     setMaxSprint('10');
+                    setVerifiedOnly(false);
+                    setAgeGroup(null);
                   }}
                 >
                   <Text style={styles.modalResetText}>Reset All</Text>
@@ -500,11 +718,30 @@ const styles = StyleSheet.create({
   shortlistBtn: { flexDirection: 'row', justifyContent: 'center', alignItems: 'center', backgroundColor: Colors.secondary, padding: 12, borderRadius: 8, marginTop: 15 },
   shortlistText: { color: '#FFF', fontWeight: 'bold', fontSize: 14 },
   empty: { textAlign: 'center', marginTop: 50, color: Colors.textSecondary, fontSize: 15 },
+  reportLink: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, marginTop: 12, paddingVertical: 6 },
+  reportLinkText: { fontSize: 12, color: Colors.textSecondary },
+  reportChips: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 6, marginBottom: 14 },
+  reportChip: { paddingHorizontal: 12, paddingVertical: 8, borderRadius: 16, borderWidth: 1, borderColor: '#D1D5DB' },
+  reportChipActive: { backgroundColor: Colors.secondary, borderColor: Colors.secondary },
+  reportChipText: { fontSize: 12, color: Colors.textPrimary, fontWeight: '600' },
+  reportChipTextActive: { color: '#fff' },
+  contactNote: { fontSize: 12, color: Colors.textSecondary, marginTop: 8, lineHeight: 17 },
+  requestBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, marginTop: 10, paddingVertical: 10, borderRadius: 8, borderWidth: 1, borderColor: Colors.secondaryBorder, backgroundColor: '#fff' },
+  requestBtnText: { color: Colors.secondary, fontWeight: 'bold', fontSize: 13 },
+  sheetNote: { fontSize: 13, color: Colors.textPrimary, lineHeight: 19, backgroundColor: '#F9FAFB', padding: 12, borderRadius: 8, marginBottom: 12 },
+  unratedNote: { fontSize: 11, color: Colors.textSecondary, fontStyle: 'italic', textAlign: 'center', marginBottom: 6 },
+  errorBox: { alignItems: 'center', marginTop: 50, paddingHorizontal: 24 },
+  errorTitle: { fontSize: 16, fontWeight: 'bold', color: Colors.textPrimary },
+  errorText: { fontSize: 13, color: Colors.textSecondary, textAlign: 'center', marginTop: 6 },
+  retryBtn: { marginTop: 14, backgroundColor: Colors.secondary, paddingHorizontal: 20, paddingVertical: 10, borderRadius: 8 },
+  retryText: { color: '#fff', fontWeight: 'bold' },
 
   modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' },
   modalContent: { backgroundColor: '#FFF', borderTopLeftRadius: 20, borderTopRightRadius: 20, padding: 20, maxHeight: '80%' },
   modalHeaderRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 },
   modalTitle: { fontSize: 18, fontWeight: 'bold', color: Colors.textPrimary },
+  switchRow: { flexDirection: 'row', alignItems: 'center', marginTop: 14, paddingVertical: 10, borderTopWidth: 1, borderBottomWidth: 1, borderColor: '#F3F4F6' },
+  switchHint: { fontSize: 12, color: Colors.textSecondary, lineHeight: 17 },
   filterLabel: { fontSize: 12, fontWeight: 'bold', color: Colors.textSecondary, marginTop: 12, marginBottom: 6 },
   dropdownGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 6 },
   dropdownOption: { paddingVertical: 6, paddingHorizontal: 12, borderRadius: 6, backgroundColor: '#F3F4F6', borderWidth: 1, borderColor: Colors.border },

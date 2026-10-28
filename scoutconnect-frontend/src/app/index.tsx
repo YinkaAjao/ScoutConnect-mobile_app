@@ -2,11 +2,13 @@
 import React, { useState, useEffect } from 'react';
 import { View, Text, TextInput, TouchableOpacity, StyleSheet, Alert, KeyboardAvoidingView, Platform, ActivityIndicator, Modal, FlatList, ScrollView, Image } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { useRouter } from 'expo-router';
+import { useRouter, type Href } from 'expo-router';
 import * as SecureStore from 'expo-secure-store';
 import { Ionicons } from '@expo/vector-icons';
 import { supabase } from '../lib/supabase';
-import { API_BASE, Colors, CardSpec } from '../constants/designSystem';
+import { Colors, CardSpec } from '../constants/designSystem';
+import { apiFetch } from '../lib/api';
+import { ENTITY_TYPES } from '../constants/entityTypes';
 import * as WebBrowser from 'expo-web-browser';
 import * as AuthSession from 'expo-auth-session';
 
@@ -39,6 +41,7 @@ export default function AuthScreen() {
   
   const [isLoading, setIsLoading] = useState(false);
   const [isFetchingClubs, setIsFetchingClubs] = useState(false);
+  const [clubsError, setClubsError] = useState<string | null>(null);
   
   const [clubs, setClubs] = useState<ClubOption[]>([]);
   const [selectedClub, setSelectedClub] = useState<ClubOption | null>(null);
@@ -47,7 +50,10 @@ export default function AuthScreen() {
   const [isCreatingNewClub, setIsCreatingNewClub] = useState(false);
   const [newClubName, setNewClubName] = useState('');
   const [newClubRegion, setNewClubRegion] = useState('');
-  
+  const [newClubEntityType, setNewClubEntityType] = useState('');
+  const [newClubContactEmail, setNewClubContactEmail] = useState('');
+  const [newClubContactPhone, setNewClubContactPhone] = useState('');
+
   const router = useRouter();
 
   useEffect(() => {
@@ -55,10 +61,30 @@ export default function AuthScreen() {
     fetchClubs();
   }, []);
 
+  /** Registration answers, stored in the Supabase account's metadata and read by the backend on first sign-in. */
+  const buildRegistrationMetadata = (fallbackName?: string) => ({
+    username: username.trim() || fallbackName || '',
+    phone: phone.trim() || undefined,
+    role,
+    clubId: role === 'Coach' ? selectedClub?.id : undefined,
+    newClubName: role === 'Coach' && !selectedClub ? newClubName.trim() || undefined : undefined,
+    newClubRegion: newClubRegion.trim() || undefined,
+    newClubEntityType: role === 'Coach' && !selectedClub && newClubName.trim() ? newClubEntityType : undefined,
+    newClubContactEmail: newClubContactEmail.trim() || undefined,
+    newClubContactPhone: newClubContactPhone.trim() || undefined,
+  });
+
+  // Admins are flagged in the account's app_metadata, which users cannot edit; the server re-checks it on every call.
+  const isAdminUser = (user?: { app_metadata?: Record<string, any> } | null) => user?.app_metadata?.role === 'admin';
+
   const checkExistingSession = async () => {
     try {
       const { data: { session } } = await supabase.auth.getSession();
       if (session) {
+        if (isAdminUser(session.user)) {
+          router.replace('/admin' as Href);
+          return;
+        }
         await SecureStore.setItemAsync('userToken', session.access_token);
         const savedRole = await SecureStore.getItemAsync('userRole');
         if (savedRole === 'Coach') router.replace('/coach');
@@ -71,19 +97,13 @@ export default function AuthScreen() {
 
   const fetchClubs = async () => {
     setIsFetchingClubs(true);
+    setClubsError(null);
     try {
-      const response = await fetch(`${API_BASE}/clubs/public`);
-      const text = await response.text();
-      try {
-        const data = JSON.parse(text);
-        if (response.ok && Array.isArray(data)) {
-          setClubs(data);
-        }
-      } catch (parseError) {
-        console.log('Backend returned invalid JSON for clubs. Is the server running?', text.substring(0, 50));
-      }
-    } catch (error) {
+      const data = await apiFetch('/clubs/public', { auth: false });
+      if (Array.isArray(data)) setClubs(data);
+    } catch (error: any) {
       console.log('Could not fetch clubs:', error);
+      setClubsError(error?.message || 'Could not load academies.');
     } finally {
       setIsFetchingClubs(false);
     }
@@ -164,8 +184,18 @@ export default function AuthScreen() {
           if (sessionError) throw sessionError;
           
           if (sessionData.session) {
-            await SecureStore.setItemAsync('userToken', sessionData.session.access_token);
-            
+            const googleUser = sessionData.session.user;
+            if (isAdminUser(googleUser)) {
+              router.replace('/admin' as Href);
+              return;
+            }
+            if (!googleUser.user_metadata?.role) {
+              const { error: metaError } = await supabase.auth.updateUser({
+                data: buildRegistrationMetadata(googleUser.user_metadata?.full_name || googleUser.email?.split('@')[0]),
+              });
+              if (metaError) throw metaError;
+              await supabase.auth.refreshSession(); // new token carries the saved answers
+            }
             await SecureStore.setItemAsync('userRole', role);
             if (role === 'Coach') router.replace('/coach');
             else router.replace('/scout');
@@ -196,6 +226,11 @@ export default function AuthScreen() {
 
         if (error) throw error;
 
+        if (isAdminUser(data.user)) {
+          router.replace('/admin' as Href);
+          return;
+        }
+
         await SecureStore.setItemAsync('userToken', data.session.access_token);
         await SecureStore.setItemAsync('userRole', role);
         if (role === 'Coach') router.replace('/coach');
@@ -205,48 +240,27 @@ export default function AuthScreen() {
         const { data: authData, error: authError } = await supabase.auth.signUp({
           email: email.trim(),
           password: password,
+          options: { data: buildRegistrationMetadata() },
         });
 
         if (authError) throw authError;
         if (!authData.user) throw new Error('Failed to create account. Please try again.');
 
-        const syncPayload = {
-          id: authData.user.id,
-          username: username.trim(),
-          email: email.trim(),
-          phone: phone.trim() || undefined,
-          role: role,
-          clubId: selectedClub?.id,
-          newClubName: newClubName.trim() || undefined,
-          newClubRegion: newClubRegion.trim() || 'Kigali'
-        };
-
-        const response = await fetch(`${API_BASE}/auth/sync-profile`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(syncPayload)
-        });
-
-        const responseText = await response.text();
-        let resData;
-        try {
-          resData = JSON.parse(responseText);
-        } catch (parseError) {
-          console.error("Backend HTML response:", responseText.substring(0, 100));
-          throw new Error('The backend server is unreachable. Please verify your API_BASE network address and ensure the server is running.');
-        }
-
-        if (!response.ok) throw new Error(resData.error || 'Failed to sync profile to the database.');
-
         Alert.alert(
           'Registration Successful', 
-          'Your account has been created! Please check your email to verify your account before signing in.'
+          selectedClub
+            ? `Your account has been created! Please verify your email, then sign in. The owner of ${selectedClub.name} must approve your request before you can access its roster.`
+            : 'Your account has been created! Please check your email to verify your account before signing in.'
         );
         
         setIsLogin(true);
         setPassword('');
         setConfirmPassword('');
         setNewClubName('');
+        setNewClubRegion('');
+        setNewClubEntityType('');
+        setNewClubContactEmail('');
+        setNewClubContactPhone('');
         setSelectedClub(null);
       }
     } catch (error) {
@@ -349,7 +363,7 @@ export default function AuthScreen() {
               </View>
               <TouchableOpacity style={styles.clubSelector} onPress={() => { fetchClubs(); setShowClubModal(true); }}>
                 <Text style={(selectedClub || newClubName) ? styles.clubSelectorTextActive : styles.clubSelectorText}>
-                  {selectedClub ? `${selectedClub.name} (${selectedClub.region})` : newClubName ? `${newClubName} (Provisional)` : "Tap to Select or Register Academy"}
+                  {selectedClub ? `${selectedClub.name} (${selectedClub.region})` : newClubName ? `${newClubName} (${newClubEntityType})` : "Tap to Select or Register Academy"}
                 </Text>
               </TouchableOpacity>
             </>
@@ -454,7 +468,14 @@ export default function AuthScreen() {
                     )}
                     ListEmptyComponent={
                       <View style={{ padding: 20, alignItems: 'center' }}>
-                        <Text style={{ color: Colors.textSecondary, marginBottom: 10 }}>No matching academy found.</Text>
+                        <Text style={{ color: clubsError ? Colors.danger : Colors.textSecondary, marginBottom: 10, textAlign: 'center' }}>
+                          {clubsError ? `Couldn't load academies: ${clubsError}` : 'No matching academy found.'}
+                        </Text>
+                        {clubsError && (
+                          <TouchableOpacity onPress={fetchClubs} accessibilityRole="button">
+                            <Text style={{ color: Colors.secondary, fontWeight: 'bold' }}>Try again</Text>
+                          </TouchableOpacity>
+                        )}
                       </View>
                     }
                   />
@@ -489,11 +510,51 @@ export default function AuthScreen() {
                   onChangeText={setNewClubRegion}
                 />
 
+                <Text style={styles.inputLabel}>Entity Classification *</Text>
+                <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 14 }}>
+                  {ENTITY_TYPES.map((type) => (
+                    <TouchableOpacity
+                      key={type}
+                      onPress={() => setNewClubEntityType(type)}
+                      style={{
+                        paddingHorizontal: 12, paddingVertical: 8, borderRadius: 16, borderWidth: 1,
+                        borderColor: newClubEntityType === type ? Colors.primary : '#D1D5DB',
+                        backgroundColor: newClubEntityType === type ? Colors.primary : 'transparent',
+                      }}
+                    >
+                      <Text style={{ fontSize: 12, fontWeight: '600', color: newClubEntityType === type ? '#fff' : Colors.textPrimary }}>{type}</Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+
+                <Text style={styles.inputLabel}>Official Contact Email (Optional)</Text>
+                <TextInput
+                  style={styles.input}
+                  placeholder="e.g. info@kimironkocity.rw"
+                  value={newClubContactEmail}
+                  onChangeText={setNewClubContactEmail}
+                  keyboardType="email-address"
+                  autoCapitalize="none"
+                />
+
+                <Text style={styles.inputLabel}>Contact Phone (Optional)</Text>
+                <TextInput
+                  style={styles.input}
+                  placeholder="e.g. +250 7xx xxx xxx"
+                  value={newClubContactPhone}
+                  onChangeText={setNewClubContactPhone}
+                  keyboardType="phone-pad"
+                />
+
                 <TouchableOpacity 
                   style={[styles.primaryBtn, { marginTop: 10 }]}
                   onPress={() => {
                     if (!newClubName.trim()) {
                       Alert.alert('Error', 'Please enter a club name.');
+                      return;
+                    }
+                    if (!newClubEntityType) {
+                      Alert.alert('Error', 'Please choose an entity classification.');
                       return;
                     }
                     setSelectedClub(null);

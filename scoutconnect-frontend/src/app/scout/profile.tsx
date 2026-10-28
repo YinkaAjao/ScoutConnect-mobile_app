@@ -4,14 +4,24 @@ import { View, Text, TouchableOpacity, StyleSheet, ScrollView, ActivityIndicator
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import * as SecureStore from 'expo-secure-store';
-import { getAuthToken } from '../../lib/supabase';
+import { supabase } from '../../lib/supabase';
+import { apiFetch } from '../../lib/api';
 import { Ionicons } from '@expo/vector-icons';
-import { API_BASE, Colors, CardSpec } from '../../constants/designSystem';
+import { Colors, CardSpec } from '../../constants/designSystem';
+
+const ACCREDITATION_LABEL: Record<string, string> = {
+  Pending: 'Not applied',
+  Submitted: 'Under review',
+  Approved: 'Approved',
+  Rejected: 'Declined',
+  Suspended: 'Suspended',
+};
 
 export default function ScoutProfileScreen() {
   const router = useRouter();
 
   const [shortlistCount, setShortlistCount] = useState<number>(0);
+  const [me, setMe] = useState<{ username: string; email: string; phone: string | null; createdAt: string | null; accreditationStatus?: string } | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
   const [activeModal, setActiveModal] = useState<'account' | 'support' | null>(null);
 
@@ -21,22 +31,11 @@ export default function ScoutProfileScreen() {
 
   const loadScoutStats = async () => {
     setLoading(true);
-    try {
-      const token = await getAuthToken();
-      if (token) {
-        const response = await fetch(`${API_BASE}/shortlist`, {
-          headers: { 'Authorization': `Bearer ${token}` }
-        });
-        if (response.ok) {
-          const data = await response.json();
-          if (Array.isArray(data)) setShortlistCount(data.length);
-        }
-      }
-    } catch (error) {
-      console.log('Error loading scout profile metrics:', error);
-    } finally {
-      setLoading(false);
-    }
+    const [account, shortlist] = await Promise.allSettled([apiFetch('/me'), apiFetch('/shortlist')]);
+    if (account.status === 'fulfilled') setMe(account.value);
+    else console.log('Could not load account details:', account.reason);
+    if (shortlist.status === 'fulfilled' && Array.isArray(shortlist.value)) setShortlistCount(shortlist.value.length);
+    setLoading(false);
   };
 
   const handleLogout = () => {
@@ -49,6 +48,7 @@ export default function ScoutProfileScreen() {
           text: 'Log Out',
           style: 'destructive',
           onPress: async () => {
+            await supabase.auth.signOut();
             await SecureStore.deleteItemAsync('userToken');
             await SecureStore.deleteItemAsync('userRole');
             router.replace('/');
@@ -66,7 +66,7 @@ export default function ScoutProfileScreen() {
         <View style={styles.topBanner}>
           <View style={styles.rowCenter}>
             <Ionicons name="globe-outline" size={14} color={Colors.warningText} />
-            <Text style={styles.topBannerText}>REGIONAL TALENT HUB • KIGALI FEED</Text>
+            <Text style={styles.topBannerText}>SCOUT ACCOUNT</Text>
           </View>
           <TouchableOpacity onPress={loadScoutStats} style={styles.refreshPill}>
             <Ionicons name="refresh" size={12} color={Colors.warningText} />
@@ -84,10 +84,10 @@ export default function ScoutProfileScreen() {
             </View>
             <View style={{ flex: 1, marginLeft: 14 }}>
               <View style={styles.rowCenter}>
-                <Text style={styles.heroTitle}>Accredited Talent Scout</Text>
-                <Ionicons name="checkmark-circle" size={16} color="#93C5FD" style={{ marginLeft: 6 }} />
+                <Text style={styles.heroTitle}>{me?.username || (loading ? 'Loading…' : 'Name not set')}</Text>
               </View>
-              <Text style={styles.heroSubtitle}>East Africa Recruitment Network</Text>
+              <Text style={styles.heroSubtitle}>{me?.email || ''}</Text>
+              <Text style={styles.heroSubtitle}>Accreditation: {ACCREDITATION_LABEL[me?.accreditationStatus ?? ''] ?? (loading ? 'Checking…' : 'Not applied')}</Text>
             </View>
             <View style={styles.roleBadge}>
               <Text style={styles.roleBadgeText}>SCOUT</Text>
@@ -101,8 +101,8 @@ export default function ScoutProfileScreen() {
             </View>
             <View style={styles.heroMetricDivider} />
             <View style={styles.heroMetricBox}>
-              <Text style={styles.heroMetricVal}>Verified</Text>
-              <Text style={styles.heroMetricLabel}>Telemetry Access</Text>
+              <Text style={styles.heroMetricVal}>{me?.createdAt ? new Date(me.createdAt).getFullYear() : '—'}</Text>
+              <Text style={styles.heroMetricLabel}>Member Since</Text>
             </View>
           </View>
         </View>
@@ -112,12 +112,12 @@ export default function ScoutProfileScreen() {
           <View style={styles.cardHeaderRow}>
             <View style={styles.rowCenter}>
               <Ionicons name="analytics-outline" size={18} color={Colors.secondary} />
-              <Text style={styles.sectionTitle}>Scouting & Verification Protocol</Text>
+              <Text style={styles.sectionTitle}>About the Data</Text>
             </View>
             {loading && <ActivityIndicator size="small" color={Colors.secondary} />}
           </View>
           <Text style={styles.sectionDesc}>
-            All prospect evaluations in your feed include 4-pillar coach checklists (Technical, Tactical, Physical, Psychological) signed with cryptographic coach keys. Flag any suspicious profiles directly from the player detail view.
+            Evaluations in your feed come from coaches' 4-pillar checklists (Technical, Tactical, Physical, Psychological). Scores shown as N/A, or empty rings, were not rated by the coach. Athletes are shown by first name only; the club decides whether to share their full name and contact details when you send a request.
           </Text>
 
           <TouchableOpacity style={styles.actionOutlineBtn} onPress={() => router.push('/scout')}>
@@ -134,8 +134,8 @@ export default function ScoutProfileScreen() {
                 <Ionicons name="person-circle-outline" size={20} color={Colors.secondary} />
               </View>
               <View>
-                <Text style={styles.menuItemTitle}>Account & Region Settings</Text>
-                <Text style={styles.menuItemSub}>Recruitment hub & notification preferences</Text>
+                <Text style={styles.menuItemTitle}>My Account</Text>
+                <Text style={styles.menuItemSub}>Your name, email and phone</Text>
               </View>
             </View>
             <Ionicons name="chevron-forward" size={18} color={Colors.textSecondary} />
@@ -150,7 +150,7 @@ export default function ScoutProfileScreen() {
               </View>
               <View>
                 <Text style={styles.menuItemTitle}>Help & Support</Text>
-                <Text style={styles.menuItemSub}>Club contact guidelines & profile auditing</Text>
+                <Text style={styles.menuItemSub}>How to contact clubs</Text>
               </View>
             </View>
             <Ionicons name="chevron-forward" size={18} color={Colors.textSecondary} />
@@ -173,10 +173,16 @@ export default function ScoutProfileScreen() {
               <>
                 <View style={styles.rowCenter}>
                   <Ionicons name="id-card-outline" size={20} color={Colors.secondary} />
-                  <Text style={styles.modalTitle}>Scout Credentials</Text>
+                  <Text style={styles.modalTitle}>My Account</Text>
                 </View>
                 <Text style={styles.supportParagraph}>
-                  • <Text style={{ fontWeight: 'bold' }}>Active Hub:</Text> Kigali Regional Hub (FERWAFA Grassroots Network)
+                  • <Text style={{ fontWeight: 'bold' }}>Name:</Text> {me?.username || 'Not provided'}
+                </Text>
+                <Text style={styles.supportParagraph}>
+                  • <Text style={{ fontWeight: 'bold' }}>Email:</Text> {me?.email || 'Not provided'}
+                </Text>
+                <Text style={styles.supportParagraph}>
+                  • <Text style={{ fontWeight: 'bold' }}>Phone:</Text> {me?.phone || 'Not provided'}
                 </Text>
                 <Text style={styles.supportParagraph}>
                   • <Text style={{ fontWeight: 'bold' }}>Shortlisted Athletes:</Text> {shortlistCount} prospects saved to cloud shortlist.
@@ -189,10 +195,10 @@ export default function ScoutProfileScreen() {
                   <Text style={styles.modalTitle}>Scouting Guidelines</Text>
                 </View>
                 <Text style={styles.supportParagraph}>
-                  • To arrange trials with youth prospects, always reach out through the Verified Club Representative listed on the athlete's card.
+                  • To arrange trials with youth prospects, always reach out through the club contact listed on the athlete's card. Clubs marked Verified have been reviewed by an administrator.
                 </Text>
                 <Text style={styles.supportParagraph}>
-                  • Use the Flag Profile tool if you observe discrepancies between combine stopwatch metrics and match footage.
+                  • Scores shown as N/A, or empty rings, were not rated by the coach. Ask the club for details before drawing conclusions.
                 </Text>
               </>
             )}

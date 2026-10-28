@@ -1,6 +1,7 @@
 // src/constants/designSystem.ts
 
-export const API_BASE = 'https://scoutconnect.onrender.com/api';
+// Single source of truth for the backend URL; override per environment with EXPO_PUBLIC_API_URL.
+export const API_BASE = process.env.EXPO_PUBLIC_API_URL || 'https://scoutconnect.onrender.com/api';
 
 export const Colors = {
   primary: '#2E8B57',       // Sea Green - Coach UI, hero cards, active toggles

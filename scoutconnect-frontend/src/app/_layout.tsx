@@ -18,6 +18,7 @@ export default function RootLayout() {
         <Stack.Screen name="index" />
         <Stack.Screen name="coach" />
         <Stack.Screen name="scout" />
+        <Stack.Screen name="admin" />
       </Stack>
     </ThemeProvider>
   );

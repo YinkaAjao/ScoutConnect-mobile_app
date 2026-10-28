@@ -1,5 +1,6 @@
 // src/config.ts
-export const API_BASE = 'https://scoutconnect.onrender.com/api';
+export { API_BASE } from './constants/designSystem';
+import { API_BASE } from './constants/designSystem';
 
 /**
  * Safe fetch wrapper that prevents JSON Parse crashes ('<' HTML errors)

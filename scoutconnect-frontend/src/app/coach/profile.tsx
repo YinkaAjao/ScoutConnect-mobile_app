@@ -1,12 +1,14 @@
 // src/app/coach/profile.tsx
 import React, { useEffect, useState } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, ScrollView, ActivityIndicator, Alert, Modal } from 'react-native';
+import { View, Text, TouchableOpacity, StyleSheet, ScrollView, ActivityIndicator, Alert, Modal, TextInput } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import * as SecureStore from 'expo-secure-store';
 import { Ionicons } from '@expo/vector-icons';
-import { supabase, getAuthToken } from '../../lib/supabase';
-import { API_BASE, Colors, CardSpec } from '../../constants/designSystem';
+import { supabase } from '../../lib/supabase';
+import { apiFetch } from '../../lib/api';
+import { Colors, CardSpec } from '../../constants/designSystem';
+import { verificationLabel } from '../../lib/verification';
 import { 
   initDB, 
   getDraftEvaluations, 
@@ -19,10 +21,12 @@ import {
 interface ClubInfo {
   id: string;
   name: string;
-  region: string;
-  contactEmail?: string;
-  contactPhone?: string;
+  region?: string | null;
+  contactEmail?: string | null;
+  contactPhone?: string | null;
+  entityType?: string | null;
   isVerified?: boolean;
+  verificationStatus?: string | null;
   standingStatus?: 'Good' | 'Penalized' | 'Suspended';
   trustScore?: number;
 }
@@ -31,8 +35,14 @@ export default function CoachProfileScreen() {
   const router = useRouter();
 
   const [club, setClub] = useState<ClubInfo | null>(null);
-  const [coachDisplayName, setCoachDisplayName] = useState<string>('Loading Profile...');
+  const [coachDisplayName, setCoachDisplayName] = useState<string>('');
   const [coachEmail, setCoachEmail] = useState<string>('');
+  const [coachPhone, setCoachPhone] = useState<string>('');
+  const [membership, setMembership] = useState<'Active' | 'Pending' | 'Rejected'>('Active');
+  const [editingProfile, setEditingProfile] = useState(false);
+  const [draftName, setDraftName] = useState('');
+  const [draftPhone, setDraftPhone] = useState('');
+  const [savingProfile, setSavingProfile] = useState(false);
   
   const [playerCount, setPlayerCount] = useState<number>(0);
   const [draftCount, setDraftCount] = useState<number>(0);
@@ -56,54 +66,49 @@ export default function CoachProfileScreen() {
       setDraftCount(drafts.length);
       setPendingSyncCount(evals.length + stats.length + achs.length);
 
-      // Force a direct fetch from the secure Supabase Session to override fallbacks
+      // The account email is always known from the Supabase session; the saved name/phone/club come from the backend.
       const { data: { session } } = await supabase.auth.getSession();
-      
-      let fallbackEmail = 'coach@scoutconnect.rw';
-      let fallbackName = 'Academy Coach';
+      if (session?.user?.email) setCoachEmail(session.user.email);
 
-      if (session?.user) {
-        fallbackEmail = session.user.email || fallbackEmail;
-        fallbackName = session.user.user_metadata?.username || fallbackEmail.split('@')[0] || fallbackName;
-      }
-
-      setCoachDisplayName(fallbackName);
-      setCoachEmail(fallbackEmail);
-
-      const token = await getAuthToken();
-      if (token) {
-        const response = await fetch(`${API_BASE}/club`, {
-          headers: { 'Authorization': `Bearer ${token}` }
-        });
-        if (response.ok) {
-          const data = await response.json();
-          setClub(data.club);
-          setPlayerCount(data.playerCount || 0);
-
-          // Use the DB's profile if it exists, otherwise use the Supabase token we extracted above
-          setCoachDisplayName(data.coachProfile?.username || fallbackName);
-          setCoachEmail(data.coachProfile?.email || fallbackEmail);
-        } else {
-          const body = await response.text();
-          console.log(`Profile /club failed: ${response.status} ${body}`);
-          // TEMP DEBUG: print token header/claims (never the signature) to diagnose backend 403s
-          try {
-            const dec = (s: string) => JSON.parse(atob(s.replace(/-/g, '+').replace(/_/g, '/')));
-            const [h, p] = token.split('.');
-            const claims = dec(p);
-            console.log('TOKEN DEBUG', JSON.stringify({
-              header: dec(h), iss: claims.iss, aud: claims.aud, role: claims.role,
-              sub: claims.sub, expiresInSec: claims.exp - Math.floor(Date.now() / 1000),
-            }));
-          } catch (e) {
-            console.log('TOKEN DEBUG decode failed:', e);
-          }
-        }
+      try {
+        const data = await apiFetch('/club');
+        setClub(data.club);
+        setPlayerCount(data.playerCount || 0);
+        setMembership(data.membershipStatus || 'Active');
+        setCoachDisplayName(data.coachProfile?.username || '');
+        setCoachPhone(data.coachProfile?.phone || '');
+        if (data.coachProfile?.email) setCoachEmail(data.coachProfile.email);
+      } catch (e: any) {
+        console.log('Profile /club failed:', e?.message || e);
       }
     } catch (error) {
       console.log('Profile fetch note:', error);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const startEditingProfile = () => {
+    setDraftName(coachDisplayName);
+    setDraftPhone(coachPhone);
+    setEditingProfile(true);
+  };
+
+  const saveProfile = async () => {
+    if (!draftName.trim()) {
+      Alert.alert('Missing Name', 'Your name cannot be empty.');
+      return;
+    }
+    setSavingProfile(true);
+    try {
+      const data = await apiFetch('/profile', { method: 'PUT', body: { username: draftName, phone: draftPhone } });
+      setCoachDisplayName(data.user.username || '');
+      setCoachPhone(data.user.phone || '');
+      setEditingProfile(false);
+    } catch (error: any) {
+      Alert.alert('Could not save changes', error?.message || String(error));
+    } finally {
+      setSavingProfile(false);
     }
   };
 
@@ -154,7 +159,7 @@ export default function CoachProfileScreen() {
             </View>
             <View style={{ flex: 1, marginLeft: 14 }}>
               <View style={styles.rowCenter}>
-                <Text style={styles.heroTitle}>{coachDisplayName}</Text>
+                <Text style={styles.heroTitle}>{coachDisplayName || (loading ? 'Loading…' : 'Name not set')}</Text>
                 <Ionicons 
                   name={club?.isVerified ? "checkmark-circle" : "time-outline"} 
                   size={16} 
@@ -163,7 +168,9 @@ export default function CoachProfileScreen() {
                 />
               </View>
               <Text style={styles.heroSubtitle}>
-                {club?.name || 'Kigali Regional Hub'} • {club?.isVerified ? 'Verified Club' : 'Provisional Academy'}
+                {club
+                  ? `${club.name} • ${membership === 'Pending' ? 'Awaiting approval' : membership === 'Rejected' ? 'Request declined' : club.entityType || 'Entity type not set'}`
+                  : (loading ? 'Loading…' : 'No club linked')}
               </Text>
             </View>
             <View style={styles.roleBadge}>
@@ -284,20 +291,55 @@ export default function CoachProfileScreen() {
                   <Text style={styles.modalTitle}>My Contact & Academy Details</Text>
                 </View>
                 <View style={styles.infoList}>
-                  <Text style={styles.infoLabel}>Coach Name</Text>
-                  <Text style={styles.infoVal}>{coachDisplayName}</Text>
+                  {editingProfile ? (
+                    <>
+                      <Text style={styles.infoLabel}>Coach Name</Text>
+                      <TextInput style={styles.editInput} value={draftName} onChangeText={setDraftName} placeholder="Your full name" />
+                      <Text style={styles.infoLabel}>Phone</Text>
+                      <TextInput style={styles.editInput} value={draftPhone} onChangeText={setDraftPhone} placeholder="e.g. +250 7xx xxx xxx" keyboardType="phone-pad" />
+                      <View style={{ flexDirection: 'row', gap: 10, marginTop: 4 }}>
+                        <TouchableOpacity style={[styles.modalCloseBtn, { flex: 1, marginTop: 0 }]} onPress={() => setEditingProfile(false)} disabled={savingProfile}>
+                          <Text style={styles.modalCloseText}>Cancel</Text>
+                        </TouchableOpacity>
+                        <TouchableOpacity style={[styles.modalCloseBtn, { flex: 1, marginTop: 0, backgroundColor: Colors.primary }]} onPress={saveProfile} disabled={savingProfile}>
+                          {savingProfile ? <ActivityIndicator color="#fff" /> : <Text style={[styles.modalCloseText, { color: '#fff' }]}>Save</Text>}
+                        </TouchableOpacity>
+                      </View>
+                    </>
+                  ) : (
+                    <>
+                      <Text style={styles.infoLabel}>Coach Name</Text>
+                      <Text style={styles.infoVal}>{coachDisplayName || 'Not provided'}</Text>
 
-                  <Text style={styles.infoLabel}>Registered Email</Text>
-                  <Text style={styles.infoVal}>{coachEmail}</Text>
+                      <Text style={styles.infoLabel}>Registered Email</Text>
+                      <Text style={styles.infoVal}>{coachEmail || 'Not provided'}</Text>
+
+                      <Text style={styles.infoLabel}>Phone</Text>
+                      <Text style={styles.infoVal}>{coachPhone || 'Not provided'}</Text>
+                    </>
+                  )}
 
                   <Text style={styles.infoLabel}>Assigned Club / Academy</Text>
-                  <Text style={styles.infoVal}>{club?.name || 'Provisional Academy'}</Text>
+                  <Text style={styles.infoVal}>{club?.name || 'No club linked'}</Text>
+
+                  <Text style={styles.infoLabel}>Entity Classification</Text>
+                  <Text style={styles.infoVal}>{club?.entityType || 'Not provided'}</Text>
 
                   <Text style={styles.infoLabel}>Regional Hub</Text>
-                  <Text style={styles.infoVal}>{club?.region || 'Kigali'}</Text>
+                  <Text style={styles.infoVal}>{club?.region || 'Not provided'}</Text>
 
                   <Text style={styles.infoLabel}>Verification Status</Text>
-                  <Text style={styles.infoVal}>{club?.isVerified ? 'Verified Club' : 'Provisional (Pending Regional Audit)'}</Text>
+                  <Text style={styles.infoVal}>{verificationLabel(club)}</Text>
+
+                  <Text style={styles.infoLabel}>Your Membership</Text>
+                  <Text style={styles.infoVal}>{membership === 'Active' ? 'Active' : membership === 'Pending' ? 'Awaiting club owner approval' : 'Request declined'}</Text>
+
+                  {!editingProfile && (
+                    <TouchableOpacity style={styles.actionOutlineBtn} onPress={startEditingProfile}>
+                      <Ionicons name="create-outline" size={16} color={Colors.primary} />
+                      <Text style={styles.actionOutlineText}>Edit My Name & Phone</Text>
+                    </TouchableOpacity>
+                  )}
                 </View>
               </>
             ) : (
@@ -330,6 +372,7 @@ export default function CoachProfileScreen() {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: Colors.canvas, paddingHorizontal: 15, paddingTop: 10 },
+  editInput: { borderWidth: 1, borderColor: '#D1D5DB', borderRadius: 8, paddingHorizontal: 12, paddingVertical: 8, fontSize: 14, marginTop: 4, marginBottom: 10, color: Colors.textPrimary },
   rowCenter: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   topBanner: { backgroundColor: Colors.warningBg, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 12, paddingVertical: 8, borderRadius: 8, marginBottom: 12 },
   topBannerText: { color: Colors.warningText, fontWeight: 'bold', fontSize: 10 },

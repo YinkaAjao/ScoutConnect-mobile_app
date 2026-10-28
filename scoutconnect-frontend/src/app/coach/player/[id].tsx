@@ -1,15 +1,22 @@
 // src/app/coach/player/[id].tsx
 import React, { useEffect, useState } from 'react';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, ActivityIndicator, Dimensions, Image, Modal, TextInput, Alert } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, ActivityIndicator, Dimensions, Image } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { LineChart, ProgressChart } from 'react-native-chart-kit';
-import { getAuthToken } from '../../../lib/supabase';
+import { apiFetch } from '../../../lib/api';
+import { pillarScores } from '../../../lib/ratings';
+import { consentBadge } from '../../../lib/consent';
 import { Ionicons } from '@expo/vector-icons';
-import { API_BASE, Colors, CardSpec } from '../../../constants/designSystem';
+import { Colors, CardSpec } from '../../../constants/designSystem';
+import EditAthleteModal from '../../../components/EditAthleteModal';
+import { confirmRemoveAthlete, confirmRemoveRecord } from '../../../lib/roster';
+import EditMatchStatModal, { EditableMatchStat } from '../../../components/EditMatchStatModal';
+import EditAchievementModal, { EditableAchievement } from '../../../components/EditAchievementModal';
 
 interface Evaluation {
   id: string;
+  createdAt?: string;
   sprintSpeed: number;
   dribblingScore: number;
   workRate: string;
@@ -55,7 +62,11 @@ interface Player {
   name: string;
   position: string;
   dateOfBirth: string;
-  profilePhoto?: string;
+  consentStatus?: string | null;
+  consentGuardian?: string | null;
+  consentGraceUntil?: string | null;
+  profilePhoto?: string; // the stored file path; not displayable on its own
+  photoUrl?: string | null; // short-lived signed link from the server
   Club?: {
     name: string;
     region: string;
@@ -67,6 +78,12 @@ interface Player {
   Achievements?: Achievement[];
 }
 
+const CONSENT_COLORS = {
+  ok: { bg: '#D1FAE5', fg: '#047857', icon: 'checkmark-circle' },
+  warn: { bg: '#FEF3C7', fg: '#B45309', icon: 'time-outline' },
+  bad: { bg: '#FEE2E2', fg: '#B91C1C', icon: 'eye-off-outline' },
+} as const;
+
 const screenWidth = Dimensions.get('window').width - 40;
 
 export default function PlayerProfileScreen() {
@@ -77,8 +94,10 @@ export default function PlayerProfileScreen() {
   const [loading, setLoading] = useState(true);
 
   // Flagging State
-  const [showFlagModal, setShowFlagModal] = useState(false);
-  const [flagReason, setFlagReason] = useState('');
+  const [editingAthlete, setEditingAthlete] = useState(false);
+  const [editingStat, setEditingStat] = useState<EditableMatchStat | null>(null);
+  const [editingAch, setEditingAch] = useState<EditableAchievement | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   useEffect(() => {
     if (id) fetchPlayerDetails();
@@ -86,48 +105,12 @@ export default function PlayerProfileScreen() {
 
   const fetchPlayerDetails = async () => {
     try {
-      const token = await getAuthToken();
-      const response = await fetch(`${API_BASE}/players/${id}`, {
-        headers: { 'Authorization': `Bearer ${token}` }
-      });
-      
-      const data = await response.json();
-      if (response.ok) {
-        setPlayer(data);
-      }
-    } catch (error) {
-      console.error('Error fetching player details:', error);
+      setPlayer(await apiFetch(`/players/${id}`));
+      setLoadError(null);
+    } catch (error: any) {
+      setLoadError(error?.message || 'Could not load this athlete.');
     } finally {
       setLoading(false);
-    }
-  };
-
-  const submitFlag = async () => {
-    if (!flagReason.trim()) {
-      Alert.alert('Error', 'Please provide a reason for flagging this profile.');
-      return;
-    }
-
-    try {
-      const token = await getAuthToken();
-      const response = await fetch(`${API_BASE}/flags`, {
-        method: 'POST',
-        headers: { 
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}` 
-        },
-        body: JSON.stringify({ playerId: player?.id, reason: flagReason.trim() })
-      });
-
-      if (response.ok) {
-        Alert.alert('Report Submitted', 'Thank you. Our regional review team will audit this profile.');
-        setShowFlagModal(false);
-        setFlagReason('');
-      } else {
-        Alert.alert('Error', 'Could not submit flag.');
-      }
-    } catch (err) {
-      Alert.alert('Connection Error', 'Failed to reach reporting service.');
     }
   };
 
@@ -142,7 +125,7 @@ export default function PlayerProfileScreen() {
   if (!player) {
     return (
       <SafeAreaView style={styles.center}>
-        <Text style={styles.errorText}>Player data could not be loaded.</Text>
+        <Text style={styles.errorText}>{loadError || 'Player data could not be loaded.'}</Text>
         <TouchableOpacity onPress={() => router.back()} style={styles.backBtnWrapper}>
           <Text style={styles.backBtn}>Go Back</Text>
         </TouchableOpacity>
@@ -156,14 +139,11 @@ export default function PlayerProfileScreen() {
   const latestEval = hasEvals ? player.Evaluations![player.Evaluations!.length - 1] : null;
 
   if (latestEval) {
-    const avgs = latestEval.checklistData?.averages;
-    const physicalScore = avgs?.physical ? avgs.physical / 4 : (latestEval.sprintSpeed ? Math.min(latestEval.sprintSpeed / 10, 1) : 0.5); 
-    const techScore = avgs?.technical ? avgs.technical / 4 : (latestEval.dribblingScore ? latestEval.dribblingScore / 5 : 0.5);
-    const tacScore = avgs?.tactical ? avgs.tactical / 4 : 0.8;
-    
+    // Unrated pillars show as empty rings; nothing is guessed (see lib/ratings.ts).
+    const scores = pillarScores(latestEval);
     ringChartData = {
       labels: ["Physical", "Technical", "Tactical"],
-      data: [physicalScore, techScore, tacScore] 
+      data: [scores.physical ?? 0, scores.technical ?? 0, scores.tactical ?? 0]
     };
 
     const historyLabels = player.Evaluations!.map((_, index) => `E${index + 1}`);
@@ -182,14 +162,25 @@ export default function PlayerProfileScreen() {
           <Text style={styles.backBtn}>Roster</Text>
         </TouchableOpacity>
         <Text style={styles.header}>Athlete Profile</Text>
-        <View style={{ width: 60 }} /> 
+        <View style={styles.headerActions}>
+          <TouchableOpacity onPress={() => setEditingAthlete(true)} style={styles.headerIconBtn} accessibilityLabel="Edit athlete">
+            <Ionicons name="create-outline" size={20} color={Colors.secondary} />
+          </TouchableOpacity>
+          <TouchableOpacity
+            onPress={() => confirmRemoveAthlete(player, () => router.back())}
+            style={styles.headerIconBtn}
+            accessibilityLabel="Remove athlete"
+          >
+            <Ionicons name="trash-outline" size={20} color="#DC2626" />
+          </TouchableOpacity>
+        </View>
       </View>
 
       <ScrollView showsVerticalScrollIndicator={false}>
         {/* Hero Identity Section with Photo */}
         <View style={styles.heroCard}>
-          {player.profilePhoto ? (
-            <Image source={{ uri: player.profilePhoto }} style={styles.profileImage} />
+          {player.photoUrl ? (
+            <Image source={{ uri: player.photoUrl }} style={styles.profileImage} />
           ) : (
             <View style={styles.imagePlaceholder}>
               <Text style={styles.imagePlaceholderText}>{player.name.charAt(0).toUpperCase()}</Text>
@@ -199,12 +190,27 @@ export default function PlayerProfileScreen() {
           <Text style={styles.name}>{player.name}</Text>
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 12 }}>
             <Ionicons name="football-outline" size={14} color="#A7F3D0" />
-            <Text style={styles.clubText}>{player.Club?.name || 'ALU Sentinels FC'}</Text>
+            <Text style={styles.clubText}>{player.Club?.name || 'No club linked'}</Text>
           </View>
           <View style={styles.badgeRow}>
-            <Text style={styles.positionBadge}>{player.position || 'Forward'}</Text>
+            <Text style={styles.positionBadge}>{player.position || 'Position not set'}</Text>
             <Text style={styles.dobBadge}>DOB: {player.dateOfBirth}</Text>
           </View>
+          {(() => {
+            const badge = consentBadge(player);
+            const color = CONSENT_COLORS[badge.tone];
+            return (
+              <TouchableOpacity
+                style={[styles.consentPill, { backgroundColor: color.bg }]}
+                onPress={() => setEditingAthlete(true)}
+                accessibilityRole="button"
+                accessibilityLabel={`${badge.label}. Tap to edit consent.`}
+              >
+                <Ionicons name={color.icon} size={14} color={color.fg} />
+                <Text style={[styles.consentPillText, { color: color.fg }]}>{badge.label}</Text>
+              </TouchableOpacity>
+            );
+          })()}
         </View>
 
         {/* Evaluation Charts & Checklist Breakdown Section */}
@@ -280,6 +286,36 @@ export default function PlayerProfileScreen() {
           </View>
         )}
 
+        {/* Evaluation History */}
+        <View style={styles.sectionCard}>
+          <Text style={styles.sectionTitle}>Evaluation History</Text>
+          {hasEvals ? (
+            [...player.Evaluations!].reverse().map((ev) => (
+              <View key={ev.id} style={styles.statListItem}>
+                <View style={styles.statListHeader}>
+                  <Text style={styles.statComp}>
+                    {ev.evaluationDate || ev.checklistData?.evaluationDate || (ev.createdAt ? ev.createdAt.slice(0, 10) : 'Evaluation')}
+                  </Text>
+                  <TouchableOpacity
+                    onPress={() => confirmRemoveRecord('evaluations', ev.id, 'this evaluation', fetchPlayerDetails)}
+                    accessibilityRole="button"
+                    accessibilityLabel="Remove this evaluation"
+                    style={styles.recordBtn}
+                  >
+                    <Ionicons name="trash-outline" size={18} color="#DC2626" />
+                  </TouchableOpacity>
+                </View>
+                <Text style={styles.statMatchup}>
+                  Overall {ev.overallRating ?? '–'}/5 • Evaluator: {ev.evaluatorName || ev.checklistData?.evaluatorName || 'Not recorded'}
+                </Text>
+              </View>
+            ))
+          ) : (
+            <Text style={styles.emptySubtext}>No evaluations logged.</Text>
+          )}
+          {hasEvals && <Text style={styles.signedNote}>Evaluations are cryptographically signed, so they can be removed but not edited.</Text>}
+        </View>
+
         {/* Match Stats Section */}
         <View style={styles.sectionCard}>
           <Text style={styles.sectionTitle}>Match History</Text>
@@ -287,16 +323,27 @@ export default function PlayerProfileScreen() {
             player.MatchStats.map((stat) => (
               <View key={stat.id} style={styles.statListItem}>
                 <View style={styles.statListHeader}>
-                  <Text style={styles.statComp}>{stat.competition}</Text>
-                  <Text style={styles.statDate}>{stat.matchDate || 'Recent'}</Text>
+                  <Text style={[styles.statComp, { flex: 1 }]}>{stat.competition}</Text>
+                  <Text style={styles.statDate}>{stat.matchDate || 'Date not set'}</Text>
+                  <TouchableOpacity onPress={() => setEditingStat(stat)} accessibilityRole="button" accessibilityLabel={`Edit match record ${stat.competition}`} style={styles.recordBtn}>
+                    <Ionicons name="create-outline" size={18} color={Colors.secondary} />
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    onPress={() => confirmRemoveRecord('match-stats', stat.id, `the ${stat.competition} match record`, fetchPlayerDetails)}
+                    accessibilityRole="button"
+                    accessibilityLabel={`Remove match record ${stat.competition}`}
+                    style={styles.recordBtn}
+                  >
+                    <Ionicons name="trash-outline" size={18} color="#DC2626" />
+                  </TouchableOpacity>
                 </View>
-                
+
                 {stat.opponent && (
                   <Text style={styles.statMatchup}>
                     vs {stat.opponent} {stat.matchResult ? `(${stat.matchResult})` : ''}
                   </Text>
                 )}
-                
+
                 <View style={styles.statMetricsRow}>
                   <Text style={styles.statMetric}>Goals: {stat.goals}</Text>
                   <Text style={styles.statMetric}>Assists: {stat.assists}</Text>
@@ -316,10 +363,21 @@ export default function PlayerProfileScreen() {
             player.Achievements.map((ach) => (
               <View key={ach.id} style={styles.achievementItem}>
                 <Ionicons name="trophy" size={24} color="#D97706" style={{ marginRight: 15 }} />
-                <View>
+                <View style={{ flex: 1 }}>
                   <Text style={styles.achievementTitle}>{ach.title}</Text>
                   <Text style={styles.achievementYear}>{ach.year}</Text>
                 </View>
+                <TouchableOpacity onPress={() => setEditingAch(ach)} accessibilityRole="button" accessibilityLabel={`Edit ${ach.title}`} style={styles.recordBtn}>
+                  <Ionicons name="create-outline" size={18} color={Colors.secondary} />
+                </TouchableOpacity>
+                <TouchableOpacity
+                  onPress={() => confirmRemoveRecord('achievements', ach.id, `"${ach.title}"`, fetchPlayerDetails)}
+                  accessibilityRole="button"
+                  accessibilityLabel={`Remove ${ach.title}`}
+                  style={styles.recordBtn}
+                >
+                  <Ionicons name="trash-outline" size={18} color="#DC2626" />
+                </TouchableOpacity>
               </View>
             ))
           ) : (
@@ -327,46 +385,29 @@ export default function PlayerProfileScreen() {
           )}
         </View>
 
-        {/* Flag Suspicious Profile Button */}
-        <TouchableOpacity 
-          style={styles.flagBtn}
-          onPress={() => setShowFlagModal(true)}
-        >
-          <Ionicons name="flag-outline" size={18} color="#DC2626" />
-          <Text style={styles.flagBtnText}>Flag Suspicious Profile</Text>
-        </TouchableOpacity>
-
         <View style={{ height: 40 }} />
       </ScrollView>
 
-      {/* Flagging Modal Dialog */}
-      <Modal visible={showFlagModal} animationType="fade" transparent={true}>
-        <View style={styles.modalOverlay}>
-          <View style={styles.modalContent}>
-            <Text style={styles.modalTitle}>Report Profile Inaccuracy</Text>
-            <Text style={styles.modalSub}>
-              Provide details on why this telemetry data or identity seems fraudulent.
-            </Text>
+      <EditAthleteModal
+        athlete={editingAthlete ? player : null}
+        onClose={() => setEditingAthlete(false)}
+        onSaved={(updated) => {
+          setPlayer((prev) => (prev ? { ...prev, ...updated } : prev));
+          setEditingAthlete(false);
+        }}
+      />
 
-            <TextInput 
-              style={styles.modalInput}
-              placeholder="e.g. Inflated sprint times or incorrect player identity..."
-              placeholderTextColor="#9CA3AF"
-              multiline
-              value={flagReason}
-              onChangeText={setFlagReason}
-            />
+      <EditMatchStatModal
+        stat={editingStat}
+        onClose={() => setEditingStat(null)}
+        onSaved={() => { setEditingStat(null); fetchPlayerDetails(); }}
+      />
 
-            <TouchableOpacity style={styles.submitFlagBtn} onPress={submitFlag}>
-              <Text style={styles.submitFlagText}>Submit Flag for Audit</Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity style={styles.modalCloseBtn} onPress={() => setShowFlagModal(false)}>
-              <Text style={styles.modalCloseText}>Cancel</Text>
-            </TouchableOpacity>
-          </View>
-        </View>
-      </Modal>
+      <EditAchievementModal
+        achievement={editingAch}
+        onClose={() => setEditingAch(null)}
+        onSaved={() => { setEditingAch(null); fetchPlayerDetails(); }}
+      />
     </SafeAreaView>
   );
 }
@@ -389,7 +430,9 @@ const styles = StyleSheet.create({
   backBtnWrapper: { flexDirection: 'row', alignItems: 'center', gap: 4, padding: 5 },
   backBtn: { fontSize: 16, color: Colors.secondary, fontWeight: 'bold' },
   header: { fontSize: 20, fontWeight: 'bold', color: Colors.textPrimary },
-  
+  headerActions: { flexDirection: 'row', width: 60, justifyContent: 'flex-end', gap: 4 },
+  headerIconBtn: { padding: 5 },
+
   heroCard: { backgroundColor: Colors.primary, padding: 25, borderRadius: 12, marginBottom: 15, alignItems: 'center', elevation: 4 },
   profileImage: { width: 80, height: 80, borderRadius: 40, marginBottom: 12, borderWidth: 2, borderColor: '#FFF', backgroundColor: '#EEE' },
   imagePlaceholder: { width: 80, height: 80, borderRadius: 40, backgroundColor: Colors.primaryDark, justifyContent: 'center', alignItems: 'center', marginBottom: 12, borderWidth: 2, borderColor: '#FFF' },
@@ -430,16 +473,8 @@ const styles = StyleSheet.create({
   achievementTitle: { fontSize: 16, fontWeight: 'bold', color: Colors.textPrimary },
   achievementYear: { fontSize: 12, color: Colors.textSecondary, marginTop: 2 },
 
-  flagBtn: { flexDirection: 'row', justifyContent: 'center', gap: 8, backgroundColor: '#FEE2E2', padding: 14, borderRadius: 8, alignItems: 'center', borderWidth: 1, borderColor: '#FCA5A5', marginTop: 5 },
-  flagBtnText: { color: '#DC2626', fontWeight: 'bold', fontSize: 14 },
-
-  modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' },
-  modalContent: { backgroundColor: '#FFF', borderTopLeftRadius: 20, borderTopRightRadius: 20, padding: 20 },
-  modalTitle: { fontSize: 18, fontWeight: 'bold', color: Colors.textPrimary, marginBottom: 6 },
-  modalSub: { fontSize: 13, color: Colors.textSecondary, marginBottom: 15 },
-  modalInput: { backgroundColor: '#F9FAFB', borderWidth: 1, borderColor: Colors.border, borderRadius: 8, padding: 12, height: 90, textAlignVertical: 'top', marginBottom: 15, fontSize: 14 },
-  submitFlagBtn: { backgroundColor: '#DC2626', padding: 14, borderRadius: 8, alignItems: 'center', marginBottom: 10 },
-  submitFlagText: { color: '#FFF', fontWeight: 'bold', fontSize: 14 },
-  modalCloseBtn: { padding: 12, backgroundColor: '#E5E7EB', borderRadius: 8, alignItems: 'center' },
-  modalCloseText: { color: Colors.textPrimary, fontWeight: 'bold' }
+  consentPill: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 10, paddingVertical: 5, borderRadius: 12, marginTop: 12 },
+  consentPillText: { fontSize: 11, fontWeight: 'bold' },
+  recordBtn: { padding: 5, marginLeft: 2 },
+  signedNote: { fontSize: 11, color: Colors.textSecondary, fontStyle: 'italic', marginTop: 4 },
 });

@@ -1,23 +1,22 @@
 // src/app/coach/index.tsx
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { useFocusEffect } from 'expo-router';
 import { StyleSheet, Text, View, TextInput, TouchableOpacity, Alert, ScrollView, Image, ActivityIndicator, Modal, FlatList, Platform } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import NetInfo from '@react-native-community/netinfo';
-import { getAuthToken } from '../../lib/supabase';
+import { apiFetch, ApiError } from '../../lib/api';
+import { uploadAthletePhoto } from '../../lib/storage';
+import { normaliseName, isValidDob, timeAgo, describeSkipReason } from '../../lib/text';
 import * as ImagePicker from 'expo-image-picker';
 import { Ionicons } from '@expo/vector-icons';
 import DateTimePicker from '@react-native-community/datetimepicker';
-import { API_BASE, Colors, CardSpec } from '../../constants/designSystem';
+import { Colors, CardSpec } from '../../constants/designSystem';
+import { POSITION_CATEGORIES } from '../../constants/positions';
 import { 
   initDB, saveEvaluationLocally, deleteEvaluationDraft, saveMatchStatLocally, saveAchievementLocally, 
   getDraftEvaluations, getUnsyncedEvaluations, getUnsyncedMatchStats, getUnsyncedAchievements, 
-  markEvaluationsAsSynced, markMatchStatsAsSynced, markAchievementsAsSynced 
+  markEvaluationsAsSynced, markMatchStatsAsSynced, markAchievementsAsSynced, discardLocalItems
 } from '../../../database';
-
-const UPLOAD_URL = `${API_BASE}/upload`;
-const SYNC_URL = `${API_BASE}/sync`;
-const CLUB_API = `${API_BASE}/club`;
-const ROSTER_API = `${API_BASE}/club/players`;
 
 const RATING_OPTIONS = [
   { value: 1, short: 'Needs Imp.', full: 'Needs Improvement' },
@@ -25,13 +24,6 @@ const RATING_OPTIONS = [
   { value: 3, short: 'Good', full: 'Good' },
   { value: 4, short: 'Excellent', full: 'Excellent' },
 ];
-
-const POSITION_CATEGORIES = {
-  Goalkeeper: ['Goalkeeper'],
-  Defender: ['Center Back', 'Left Fullback', 'Right Fullback', 'Left Wingback', 'Right Wingback'],
-  Midfielder: ['Defensive Midfielder', 'Central Midfielder', 'Attacking Midfielder', 'Left Midfielder', 'Right Midfielder'],
-  Forward: ['Left Winger', 'Right Winger', 'Striker / Center Forward'],
-};
 
 const STAGES = [
   { id: 1, title: 'Identity & Info', icon: 'person-outline' },
@@ -43,8 +35,14 @@ const STAGES = [
 
 export default function CoachScreen() {
   const [activeTab, setActiveTab] = useState<'Evaluation' | 'MatchStat' | 'Achievement'>('Evaluation'); 
-  const [clubNameDisplay, setClubNameDisplay] = useState('My Academy');
+  const [clubNameDisplay, setClubNameDisplay] = useState('');
   const [rosterList, setRosterList] = useState<any[]>([]);
+  // Server id of the roster athlete this evaluation is linked to (null = a new athlete).
+  const [linkedAthleteId, setLinkedAthleteId] = useState<string | null>(null);
+  const [pickerPurpose, setPickerPurpose] = useState<'stats' | 'prefill'>('stats');
+  const [membershipNotice, setMembershipNotice] = useState<string | null>(null);
+  const [syncStatus, setSyncStatus] = useState<{ state: 'idle' | 'ok' | 'error' | 'waking'; at?: number; message?: string }>({ state: 'idle' });
+  const syncingRef = useRef(false);
   
   // --- STAGED CHECKLIST STATE ---
   const [currentStage, setCurrentStage] = useState<number>(1);
@@ -55,7 +53,7 @@ export default function CoachScreen() {
   const [playerLastName, setPlayerLastName] = useState('');
   
   // Date Picker States
-  const [dateOfBirth, setDateOfBirth] = useState('2008-01-01');
+  const [dateOfBirth, setDateOfBirth] = useState('');
   const [showDobPicker, setShowDobPicker] = useState(false);
   const [matchDate, setMatchDate] = useState('');
   const [showMatchDatePicker, setShowMatchDatePicker] = useState(false);
@@ -108,7 +106,6 @@ export default function CoachScreen() {
       try {
         await initDB();
         await checkUnsyncedRecords();
-        await fetchCoachClubAndRoster();
       } catch (err) {
         console.log('DB Init Error:', err);
       }
@@ -121,27 +118,48 @@ export default function CoachScreen() {
     return () => unsubscribe();
   }, []);
 
+  // Refetch whenever the tab regains focus so club edits and earlier failed loads are picked up.
+  useFocusEffect(
+    useCallback(() => {
+      fetchCoachClubAndRoster();
+    }, [])
+  );
+
   const fetchCoachClubAndRoster = async () => {
-    try {
-      const token = await getAuthToken();
-      if (!token) return;
+    const [clubResult, rosterResult] = await Promise.allSettled([
+      apiFetch('/club'),
+      apiFetch('/club/roster'),
+    ]);
 
-      const clubRes = await fetch(CLUB_API, { headers: { 'Authorization': `Bearer ${token}` } });
-      if (clubRes.ok) {
-        const clubData = await clubRes.json();
-        if (clubData?.club?.name) {
-          setClubNameDisplay(clubData.club.name.toUpperCase());
-          setTeamName(clubData.club.name);
-        }
+    if (clubResult.status === 'fulfilled') {
+      const clubData = clubResult.value;
+      if (clubData?.club?.name) {
+        setClubNameDisplay(clubData.club.name.toUpperCase());
+        setTeamName(clubData.club.name);
+      }
+      if (clubData?.membershipStatus === 'Pending') {
+        setMembershipNotice('Your request to join this club is awaiting approval by the club owner. You can keep drafting, but nothing will sync until you are approved.');
+      } else if (clubData?.membershipStatus === 'Rejected') {
+        setMembershipNotice('Your request to join this club was declined. Contact the club owner or register a different academy.');
+      } else {
+        setMembershipNotice(null);
       }
 
-      const rosterRes = await fetch(ROSTER_API, { headers: { 'Authorization': `Bearer ${token}` } });
-      if (rosterRes.ok) {
-        const rosterData = await rosterRes.json();
-        setRosterList(rosterData);
+      // Pre-fill the evaluator with the signed-in coach's saved name (only while the fields are still empty).
+      const coachName = normaliseName(clubData?.coachProfile?.username);
+      if (coachName) {
+        const [first, ...rest] = coachName.split(' ');
+        setEvaluatorFirstName((prev) => prev || first);
+        setEvaluatorLastName((prev) => prev || rest.join(' '));
       }
-    } catch (e) {
-      console.log('Could not fetch club/roster metadata:', e);
+    } else {
+      console.log('Could not fetch club metadata:', clubResult.reason);
+    }
+
+    if (rosterResult.status === 'fulfilled' && Array.isArray(rosterResult.value)) {
+      setRosterList(rosterResult.value);
+    } else if (rosterResult.status === 'rejected') {
+      console.log('Could not fetch roster:', rosterResult.reason);
     }
   };
 
@@ -160,7 +178,8 @@ export default function CoachScreen() {
     setCurrentStage(1);
     setPlayerFirstName('');
     setPlayerLastName('');
-    setDateOfBirth('2008-01-01');
+    setDateOfBirth('');
+    setLinkedAthleteId(null);
     setMainPosition('Striker / Center Forward');
     setSubPosition('None');
     setProfilePhoto(null);
@@ -178,7 +197,8 @@ export default function CoachScreen() {
     setEditingDraftId(draft.id);
     setCurrentStage(draft.currentStage || 1);
     setProfilePhoto(draft.profilePhoto || null);
-    setDateOfBirth(draft.dateOfBirth || '2008-01-01');
+    setDateOfBirth(draft.dateOfBirth || '');
+    setLinkedAthleteId(draft.playerId || null);
     setMainPosition(draft.position || 'Striker / Center Forward');
 
     if (draft.checklistJson) {
@@ -232,71 +252,120 @@ export default function CoachScreen() {
     }
   };
 
-  const triggerSync = async () => {
+  /**
+   * Pushes finalized records to the server. `manual` is true when the coach taps "Sync Now": only then are
+   * results shown as popups; automatic syncs report through the status line instead.
+   * A ref (not state) guards against overlapping runs, because connectivity events can fire in quick succession.
+   */
+  const triggerSync = async (manual: boolean = false) => {
+    if (syncingRef.current) return;
+    syncingRef.current = true;
     setIsSyncing(true);
+
     try {
       const records = await getUnsyncedEvaluations();
       const matchStats = await getUnsyncedMatchStats();
       const achievements = await getUnsyncedAchievements();
 
       if (records.length === 0 && matchStats.length === 0 && achievements.length === 0) {
-        setIsSyncing(false);
+        setSyncStatus({ state: 'ok', at: Date.now(), message: 'Nothing waiting to sync.' });
         return;
       }
 
-      const token = await getAuthToken(); 
-
-      const processedRecords = await Promise.all(records.map(async (record: any) => {
-        let finalPhotoUrl = record.profilePhoto;
-        if (finalPhotoUrl && finalPhotoUrl.startsWith('file://')) {
-          const formData = new FormData();
-          formData.append('media', {
-            uri: finalPhotoUrl,
-            name: `photo_${Date.now()}.jpg`,
-            type: 'image/jpeg'
-          } as any);
-
+      // Photos go to Supabase Storage first; a record whose photo can't be uploaded stays queued for the next attempt.
+      const readyRecords: any[] = [];
+      let photoFailures = 0;
+      for (const record of records) {
+        if (record.profilePhoto && !/^https?:\/\//.test(record.profilePhoto)) {
           try {
-            const uploadRes = await fetch(UPLOAD_URL, {
-              method: 'POST',
-              headers: { 'Authorization': `Bearer ${token}` },
-              body: formData
-            });
-            const uploadData = await uploadRes.json();
-            if (uploadRes.ok) finalPhotoUrl = uploadData.url;
+            readyRecords.push({ ...record, profilePhoto: await uploadAthletePhoto(record) });
           } catch (uploadErr) {
-            console.log('Failed to upload image during sync:', uploadErr);
+            console.log('Photo upload failed during sync:', uploadErr);
+            photoFailures += 1;
           }
+        } else {
+          readyRecords.push(record);
         }
-        return { ...record, profilePhoto: finalPhotoUrl };
-      }));
-      
-      const response = await fetch(SYNC_URL, {
+      }
+
+      const result = await apiFetch('/sync', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
-        body: JSON.stringify({ records: processedRecords, matchStats, achievements }) 
+        body: { records: readyRecords, matchStats, achievements },
+        onRetry: () => setSyncStatus({ state: 'waking' }),
       });
 
-      if (response.ok) {
-        if (records.length > 0) await markEvaluationsAsSynced(records.map((r: any) => r.id));
-        if (matchStats.length > 0) await markMatchStatsAsSynced(matchStats.map((r: any) => r.id));
-        if (achievements.length > 0) await markAchievementsAsSynced(achievements.map((r: any) => r.id));
-        
-        await checkUnsyncedRecords(); 
-        Alert.alert('Sync Successful', 'Pitchside telemetry synced with cloud database!');
-      } else {
-        const errJson = await response.json();
-        Alert.alert('Sync Notice', errJson.error || 'Server rejected synchronization payload.');
+      // Only what the server confirms is marked synced; skipped items stay queued instead of being lost.
+      await markEvaluationsAsSynced(result.syncedIds?.records ?? []);
+      await markMatchStatsAsSynced(result.syncedIds?.matchStats ?? []);
+      await markAchievementsAsSynced(result.syncedIds?.achievements ?? []);
+      await checkUnsyncedRecords();
+
+      const skipped: { type: 'records' | 'matchStats' | 'achievements'; id: number; reason: string }[] = result.skipped ?? [];
+      const problems = skipped.length + photoFailures;
+
+      if (problems === 0) {
+        setSyncStatus({ state: 'ok', at: Date.now(), message: 'All records synced.' });
+        if (manual) Alert.alert('Sync Successful', 'Pitchside telemetry synced with the cloud database.');
+        return;
+      }
+
+      setSyncStatus({
+        state: 'error',
+        at: Date.now(),
+        message: `${problems} item${problems === 1 ? '' : 's'} could not sync yet.`,
+      });
+
+      if (manual) {
+        const lines = [
+          ...skipped.map((s) => `• ${s.type === 'records' ? 'An evaluation' : s.type === 'matchStats' ? 'A match record' : 'An achievement'}: ${describeSkipReason(s.reason)}`),
+          ...(photoFailures ? [`• ${photoFailures} evaluation photo${photoFailures === 1 ? '' : 's'} could not be uploaded (check your connection)`] : []),
+        ];
+        const discardable = skipped.filter((s) => s.reason !== 'server_error');
+        Alert.alert(
+          'Some items were not synced',
+          `${lines.join('\n')}\n\nEverything else was saved.`,
+          [
+            { text: 'Keep for later', style: 'cancel' },
+            ...(discardable.length
+              ? [{
+                  text: 'Discard unsyncable',
+                  style: 'destructive' as const,
+                  onPress: async () => {
+                    for (const type of ['records', 'matchStats', 'achievements'] as const) {
+                      await discardLocalItems(type, discardable.filter((s) => s.type === type).map((s) => s.id));
+                    }
+                    await checkUnsyncedRecords();
+                  },
+                }]
+              : []),
+          ]
+        );
       }
     } catch (error) {
-      console.log('Sync failed connection error:', error);
+      let message = error instanceof Error ? error.message : 'Sync failed.';
+      if (error instanceof ApiError) {
+        if (error.code === 'NO_SESSION' || error.status === 403 && /token/i.test(error.message)) message = 'Your session has expired. Sign in again to sync.';
+        else if (error.code === 'MEMBERSHIP_PENDING') message = 'Waiting for the club owner to approve your membership.';
+        else if (error.code === 'MEMBERSHIP_REJECTED') message = 'Your club membership request was declined.';
+      }
+      setSyncStatus({ state: 'error', at: Date.now(), message });
+      if (manual) Alert.alert('Sync Notice', message);
     } finally {
+      syncingRef.current = false;
       setIsSyncing(false);
     }
   };
 
   const persistEvaluation = async (isDraftFlag: 0 | 1) => {
-    const fullName = `${playerFirstName.trim()} ${playerLastName.trim()}`.trim();
+    try {
+      await persistEvaluationUnsafe(isDraftFlag);
+    } catch (err) {
+      Alert.alert('Could not save', (err as Error).message);
+    }
+  };
+
+  const persistEvaluationUnsafe = async (isDraftFlag: 0 | 1) => {
+    const fullName = normaliseName(`${playerFirstName} ${playerLastName}`);
     if (!fullName) {
       Alert.alert('Required Field', 'Please enter at least the Player First or Last Name in Stage 1 before saving.');
       setCurrentStage(1);
@@ -306,6 +375,11 @@ export default function CoachScreen() {
     if (isDraftFlag === 0) {
       if (!playerFirstName.trim() || !playerLastName.trim()) {
         Alert.alert('Validation Error', 'Both Player First Name and Last Name are required for final submission.');
+        setCurrentStage(1);
+        return;
+      }
+      if (!isValidDob(dateOfBirth)) {
+        Alert.alert('Date of Birth Required', "Please set the player's date of birth in Stage 1 before final submission.");
         setCurrentStage(1);
         return;
       }
@@ -366,6 +440,12 @@ export default function CoachScreen() {
 
     const summaryWorkRate = `${mainPosition} (Sub: ${subPosition}) | Overall: ${overallRating || 3}/5`;
 
+    // Link to an existing roster athlete (same name + date of birth) so a re-evaluation never creates a duplicate.
+    const rosterMatch = linkedAthleteId
+      ? null
+      : rosterList.find((p) => normaliseName(p.name).toLowerCase() === fullName.toLowerCase() && p.dateOfBirth === dateOfBirth);
+    const resolvedAthleteId = linkedAthleteId ?? rosterMatch?.id ?? null;
+
     await saveEvaluationLocally(
       fullName,
       dateOfBirth,
@@ -378,7 +458,8 @@ export default function CoachScreen() {
       JSON.stringify(checklistObject),
       currentStage,
       isDraftFlag,
-      editingDraftId
+      editingDraftId,
+      resolvedAthleteId
     );
 
     await checkUnsyncedRecords();
@@ -398,11 +479,25 @@ export default function CoachScreen() {
         Alert.alert('Validation Error', 'Please select a roster player to guarantee unique identification.');
         return;
       }
+      // Use the roster athlete's real date of birth (not the evaluation form's) so the server can match them.
+      const athlete = rosterList.find((p) => p.id === selectedPlayerId);
+      if (!athlete) {
+        Alert.alert('Athlete Not Found', 'Pick the athlete again from the roster.');
+        return;
+      }
       if (activeTab === 'MatchStat') {
-        await saveMatchStatLocally(selectedPlayerNameDisplay, dateOfBirth, competition, matchDate, opponent, matchResult, parseInt(goals) || 0, parseInt(assists) || 0, parseInt(minutesPlayed) || 90);
+        if (!competition.trim()) {
+          Alert.alert('Missing Information', 'Please enter the competition or league.');
+          return;
+        }
+        await saveMatchStatLocally(athlete.name, athlete.dateOfBirth, competition.trim(), matchDate, opponent.trim(), matchResult.trim(), parseInt(goals) || 0, parseInt(assists) || 0, parseInt(minutesPlayed) || 90, athlete.id);
         setCompetition(''); setMatchDate(''); setOpponent(''); setMatchResult(''); setGoals('0'); setAssists('0'); setMinutesPlayed('');
       } else if (activeTab === 'Achievement') {
-        await saveAchievementLocally(selectedPlayerNameDisplay, dateOfBirth, title, parseInt(year) || 2026);
+        if (!title.trim()) {
+          Alert.alert('Missing Information', 'Please enter the trophy or medal title.');
+          return;
+        }
+        await saveAchievementLocally(athlete.name, athlete.dateOfBirth, title.trim(), parseInt(year) || new Date().getFullYear(), athlete.id);
         setTitle(''); setYear('');
       }
       await checkUnsyncedRecords();
@@ -443,6 +538,9 @@ export default function CoachScreen() {
                 key={opt.value}
                 style={[styles.matrixOptionBtn, active && styles.matrixOptionBtnActive]}
                 onPress={() => setStateFn(prev => ({ ...prev, [fieldKey]: opt.value }))}
+                accessibilityRole="button"
+                accessibilityLabel={`${label}: ${opt.full}`}
+                accessibilityState={{ selected: active }}
               >
                 <Text style={[styles.matrixOptionText, active && styles.matrixOptionTextActive]}>
                   {opt.short}
@@ -471,7 +569,7 @@ export default function CoachScreen() {
 
         <View style={styles.headerRow}>
           <View>
-            <Text style={styles.subHeader}>{clubNameDisplay}</Text>
+            <Text style={styles.subHeader}>{clubNameDisplay || 'Loading academy…'}</Text>
             <Text style={styles.header}>Player Evaluation Checklist</Text>
           </View>
           <View style={styles.coachBadge}>
@@ -479,6 +577,13 @@ export default function CoachScreen() {
           </View>
         </View>
         
+        {membershipNotice && (
+          <View style={styles.noticeBanner} accessibilityRole="alert">
+            <Ionicons name="time-outline" size={16} color={Colors.warningText} />
+            <Text style={styles.noticeText}>{membershipNotice}</Text>
+          </View>
+        )}
+
         <View style={styles.tabContainer}>
           <TouchableOpacity onPress={() => setActiveTab('Evaluation')} style={[styles.tabBtn, activeTab === 'Evaluation' && styles.tabBtnActive]}>
             <Text style={[styles.tabText, activeTab === 'Evaluation' && styles.tabTextActive]}>Checklist</Text>
@@ -514,7 +619,7 @@ export default function CoachScreen() {
                     <Text style={{ fontSize: 11, color: Colors.textSecondary }}>{draft.position || 'Forward'} • Click to continue</Text>
                   </View>
                 </TouchableOpacity>
-                <TouchableOpacity onPress={() => handleRemoveDraftOrFinal(draft.id)} style={{ padding: 6 }}>
+                <TouchableOpacity onPress={() => handleRemoveDraftOrFinal(draft.id)} style={{ padding: 6 }} accessibilityRole="button" accessibilityLabel={`Delete draft for ${draft.playerName}`}>
                   <Ionicons name="trash-outline" size={18} color={Colors.danger} />
                 </TouchableOpacity>
               </View>
@@ -551,6 +656,9 @@ export default function CoachScreen() {
                       isCompleted && styles.stepPillCompleted
                     ]}
                     onPress={() => setCurrentStage(stage.id)}
+                    accessibilityRole="button"
+                    accessibilityLabel={`Stage ${stage.id}: ${stage.title}`}
+                    accessibilityState={{ selected: isCurrent }}
                   >
                     <Ionicons
                       name={isCompleted ? 'checkmark-circle' : (stage.icon as any)}
@@ -572,7 +680,7 @@ export default function CoachScreen() {
                 <Text style={styles.sectionSub}>Set player details, main position, and secondary role.</Text>
 
                 <View style={styles.imagePickerContainer}>
-                  <TouchableOpacity onPress={pickImage} style={styles.imagePlaceholder}>
+                  <TouchableOpacity onPress={pickImage} style={styles.imagePlaceholder} accessibilityRole="button" accessibilityLabel="Add or change the player photo">
                     {profilePhoto ? (
                       <Image source={{ uri: profilePhoto }} style={styles.profileImage} />
                     ) : (
@@ -584,13 +692,33 @@ export default function CoachScreen() {
                   </TouchableOpacity>
                 </View>
 
+                {linkedAthleteId ? (
+                  <View style={styles.linkedCard}>
+                    <Ionicons name="link-outline" size={16} color={Colors.primary} />
+                    <Text style={styles.linkedText} numberOfLines={1}>Linked to roster athlete</Text>
+                    <TouchableOpacity onPress={() => setLinkedAthleteId(null)} accessibilityRole="button" accessibilityLabel="Unlink roster athlete and enter a new athlete">
+                      <Text style={styles.linkedAction}>Unlink</Text>
+                    </TouchableOpacity>
+                  </View>
+                ) : rosterList.length > 0 ? (
+                  <TouchableOpacity
+                    style={styles.prefillBtn}
+                    onPress={() => { setPickerPurpose('prefill'); setShowPlayerPickerModal(true); }}
+                    accessibilityRole="button"
+                    accessibilityLabel="Pick an existing athlete from your roster"
+                  >
+                    <Ionicons name="people-outline" size={16} color={Colors.secondary} />
+                    <Text style={styles.prefillBtnText}>Re-evaluate an existing roster athlete</Text>
+                  </TouchableOpacity>
+                ) : null}
+
                 <Text style={styles.label}>Player Full Name *</Text>
                 <View style={styles.row}>
                   <View style={styles.halfCol}>
-                    <TextInput style={styles.input} placeholder="First Name" placeholderTextColor="#9CA3AF" value={playerFirstName} onChangeText={setPlayerFirstName} />
+                    <TextInput style={styles.input} placeholder="First Name" placeholderTextColor="#9CA3AF" value={playerFirstName} onChangeText={setPlayerFirstName} editable={!linkedAthleteId} />
                   </View>
                   <View style={styles.halfCol}>
-                    <TextInput style={styles.input} placeholder="Last Name" placeholderTextColor="#9CA3AF" value={playerLastName} onChangeText={setPlayerLastName} />
+                    <TextInput style={styles.input} placeholder="Last Name" placeholderTextColor="#9CA3AF" value={playerLastName} onChangeText={setPlayerLastName} editable={!linkedAthleteId} />
                   </View>
                 </View>
 
@@ -618,14 +746,14 @@ export default function CoachScreen() {
                     <TextInput style={styles.input} placeholder="e.g. ALU Sentinels" placeholderTextColor="#9CA3AF" value={teamName} onChangeText={setTeamName} />
                   </View>
                   <View style={styles.halfCol}>
-                    <Text style={styles.label}>Player DOB</Text>
-                    <TouchableOpacity style={styles.dropdownSelector} onPress={() => setShowDobPicker(true)}>
-                      <Text style={styles.dropdownSelectorText}>{dateOfBirth || 'YYYY-MM-DD'}</Text>
+                    <Text style={styles.label}>Player DOB *</Text>
+                    <TouchableOpacity style={styles.dropdownSelector} onPress={() => setShowDobPicker(true)} disabled={!!linkedAthleteId} accessibilityLabel="Select player date of birth">
+                      <Text style={[styles.dropdownSelectorText, !dateOfBirth && { color: '#9CA3AF' }]}>{dateOfBirth || 'Select date'}</Text>
                       <Ionicons name="calendar-outline" size={14} color={Colors.textSecondary} />
                     </TouchableOpacity>
                     {showDobPicker && (
                       <DateTimePicker
-                        value={new Date(dateOfBirth)}
+                        value={dateOfBirth ? new Date(dateOfBirth) : new Date('2008-01-01')}
                         mode="date"
                         display="default"
                         onValueChange={(e, selectedDate) => {
@@ -786,7 +914,7 @@ export default function CoachScreen() {
             <Text style={styles.sectionTitle}>{activeTab === 'MatchStat' ? 'Log Match Statistics' : 'Log Trophy / Medal'}</Text>
             
             <Text style={styles.label}>Select Roster Athlete (Unique Identifier) *</Text>
-            <TouchableOpacity style={styles.dropdownSelector} onPress={() => setShowPlayerPickerModal(true)}>
+            <TouchableOpacity style={styles.dropdownSelector} onPress={() => { setPickerPurpose('stats'); setShowPlayerPickerModal(true); }}>
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
                 <Ionicons name="person-circle-outline" size={20} color={Colors.primary} />
                 <Text style={[styles.dropdownSelectorText, selectedPlayerId && { fontWeight: 'bold', color: Colors.textPrimary }]}>
@@ -877,7 +1005,7 @@ export default function CoachScreen() {
                   </View>
                 </View>
                 {/* Trash Can to Delete Staged Finalizations */}
-                <TouchableOpacity onPress={() => handleRemoveDraftOrFinal(item.id)} style={{ padding: 6, marginRight: 4 }}>
+                <TouchableOpacity onPress={() => handleRemoveDraftOrFinal(item.id)} style={{ padding: 6, marginRight: 4 }} accessibilityRole="button" accessibilityLabel={`Remove queued evaluation for ${item.playerName}`}>
                   <Ionicons name="trash-outline" size={18} color={Colors.danger} />
                 </TouchableOpacity>
               </View>
@@ -893,8 +1021,18 @@ export default function CoachScreen() {
                 <Text style={styles.statusTitle}>Finalized Records Waiting: {pendingSync}</Text>
               </View>
               <Text style={styles.statusSub}>Drafts ({draftsList.length}) stay local until submitted</Text>
+              <Text
+                style={[styles.statusSub, syncStatus.state === 'error' && { color: Colors.danger, fontWeight: 'bold' }]}
+                accessibilityLiveRegion="polite"
+              >
+                {syncStatus.state === 'waking'
+                  ? 'Waking the server… this can take up to 30 seconds.'
+                  : syncStatus.state === 'idle'
+                    ? 'Not synced yet this session.'
+                    : (syncStatus.message ?? '') + (syncStatus.at ? ' · ' + timeAgo(syncStatus.at) : '')}
+              </Text>
             </View>
-            <TouchableOpacity style={[styles.syncBtn, isSyncing && {backgroundColor: '#9CA3AF'}]} onPress={triggerSync} disabled={isSyncing}>
+            <TouchableOpacity style={[styles.syncBtn, isSyncing && {backgroundColor: '#9CA3AF'}]} onPress={() => triggerSync(true)} disabled={isSyncing} accessibilityRole="button" accessibilityLabel="Sync now">
               {isSyncing ? <ActivityIndicator size="small" color="#FFF" /> : <Text style={styles.syncBtnText}>Sync Now</Text>}
             </TouchableOpacity>
           </View>
@@ -962,8 +1100,17 @@ export default function CoachScreen() {
                   <TouchableOpacity
                     style={styles.modalPlayerItem}
                     onPress={() => {
-                      setSelectedPlayerId(item.id);
-                      setSelectedPlayerNameDisplay(item.name);
+                      if (pickerPurpose === 'prefill') {
+                        const [first, ...rest] = normaliseName(item.name).split(' ');
+                        setPlayerFirstName(first || '');
+                        setPlayerLastName(rest.join(' '));
+                        setDateOfBirth(item.dateOfBirth || '');
+                        if (item.position) setMainPosition(item.position);
+                        setLinkedAthleteId(item.id);
+                      } else {
+                        setSelectedPlayerId(item.id);
+                        setSelectedPlayerNameDisplay(item.name);
+                      }
                       setShowPlayerPickerModal(false);
                     }}
                   >
@@ -1062,6 +1209,13 @@ const styles = StyleSheet.create({
   statusSub: { fontSize: 11, color: Colors.warningText, marginTop: 2 },
   syncBtn: { backgroundColor: Colors.warningText, paddingHorizontal: 16, paddingVertical: 10, borderRadius: 8 },
   syncBtnText: { color: '#FFF', fontWeight: 'bold', fontSize: 13 },
+  noticeBanner: { flexDirection: 'row', alignItems: 'flex-start', gap: 8, backgroundColor: Colors.warningBg, padding: 12, borderRadius: 8, marginBottom: 12 },
+  noticeText: { flex: 1, fontSize: 12, color: Colors.warningText, lineHeight: 18 },
+  linkedCard: { flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: Colors.primaryLight, padding: 10, borderRadius: 8, marginBottom: 12 },
+  linkedText: { flex: 1, fontSize: 12, fontWeight: 'bold', color: Colors.primary },
+  linkedAction: { fontSize: 12, fontWeight: 'bold', color: Colors.secondary },
+  prefillBtn: { flexDirection: 'row', alignItems: 'center', gap: 8, borderWidth: 1, borderColor: Colors.secondaryBorder, backgroundColor: Colors.secondaryLight, padding: 10, borderRadius: 8, marginBottom: 12 },
+  prefillBtnText: { fontSize: 12, fontWeight: 'bold', color: Colors.secondary },
   
   modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' },
   modalContent: { backgroundColor: '#FFF', borderTopLeftRadius: 20, borderTopRightRadius: 20, padding: 20, maxHeight: '80%' },

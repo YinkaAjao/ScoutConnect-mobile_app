@@ -1,40 +1,53 @@
-import React, { useEffect, useState } from 'react';
-import { View, Text, FlatList, StyleSheet, SafeAreaView, TouchableOpacity, Alert, RefreshControl } from 'react-native';
-import { getAuthToken } from '../../lib/supabase';
+import React, { useCallback, useState } from 'react';
+import { View, Text, FlatList, StyleSheet, TouchableOpacity, Alert, RefreshControl, ActivityIndicator } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
+import { useFocusEffect } from 'expo-router';
+import { apiFetch } from '../../lib/api';
+import ScoutAccreditationPanel from '../../components/ScoutAccreditationPanel';
 
 interface ShortlistEntry {
   id: string;
-  notes: string;
+  notes: string | null;
   createdAt: string;
+  unavailable: boolean; // the athlete was removed, or their consent lapsed
   Player: {
-    name: string;
+    displayName: string;
     position: string;
-    Evaluations?: { dribblingScore: number; sprintSpeed: number }[];
-  };
+    age: number | null;
+    Evaluations?: { dribblingScore: number | null; sprintSpeed: number | null }[];
+  } | null;
 }
-
-const SHORTLIST_API = 'https://scoutconnect.onrender.com/api/shortlist';
 
 export default function ShortlistScreen() {
   const [shortlist, setShortlist] = useState<ShortlistEntry[]>([]);
+  const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
-
-  useEffect(() => {
-    fetchShortlist();
-  }, []);
+  const [error, setError] = useState<string | null>(null);
+  const [notApproved, setNotApproved] = useState(false);
 
   const fetchShortlist = async () => {
     try {
-      const token = await getAuthToken();
-      const response = await fetch(SHORTLIST_API, {
-        headers: { 'Authorization': `Bearer ${token}` }
-      });
-      const data = await response.json();
+      const data = await apiFetch('/shortlist');
+      if (!Array.isArray(data)) throw new Error('Unexpected response from the server.');
       setShortlist(data);
-    } catch (error) {
-      console.error('Error fetching shortlist:', error);
+      setError(null);
+      setNotApproved(false);
+    } catch (e: any) {
+      if (e?.code === 'SCOUT_NOT_APPROVED') {
+        setNotApproved(true);
+        return;
+      }
+      setError(e?.message || 'Could not load your shortlist.');
     }
   };
+
+  // The tab stays mounted, so reload every time it is opened (an athlete may have been added on Discover).
+  useFocusEffect(
+    useCallback(() => {
+      setLoading(true);
+      fetchShortlist().finally(() => setLoading(false));
+    }, [])
+  );
 
   const onRefresh = async () => {
     setRefreshing(true);
@@ -42,53 +55,65 @@ export default function ShortlistScreen() {
     setRefreshing(false);
   };
 
-  const removeEntry = async (id: string, playerName: string) => {
+  const removeEntry = (id: string, label: string) => {
     Alert.alert(
-      "Remove Player",
-      `Are you sure you want to remove ${playerName} from your shortlist?`,
+      'Remove Player',
+      `Are you sure you want to remove ${label} from your shortlist?`,
       [
-        { text: "Cancel", style: "cancel" },
-        { 
-          text: "Remove", 
-          style: "destructive",
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Remove',
+          style: 'destructive',
           onPress: async () => {
             try {
-              const token = await getAuthToken();
-              const response = await fetch(`${SHORTLIST_API}/${id}`, {
-                method: 'DELETE',
-                headers: { 'Authorization': `Bearer ${token}` }
-              });
-
-              if (response.ok) {
-                // Instantly remove from local UI state for snappy feedback
-                setShortlist(prev => prev.filter(entry => entry.id !== id));
-              } else {
-                Alert.alert('Error', 'Could not remove entry.');
-              }
-            } catch (error) {
-              Alert.alert('Error', 'Request failed.');
+              await apiFetch(`/shortlist/${id}`, { method: 'DELETE' });
+              setShortlist((prev) => prev.filter((entry) => entry.id !== id)); // instant feedback
+            } catch (e: any) {
+              Alert.alert('Could not remove entry', e?.message || String(e));
             }
-          }
-        }
+          },
+        },
       ]
     );
   };
 
   const renderItem = ({ item }: { item: ShortlistEntry }) => {
     const player = item.Player;
-    // Safely get the latest evaluation for a quick snapshot
-    const latestEval = player.Evaluations && player.Evaluations.length > 0 
-      ? player.Evaluations[player.Evaluations.length - 1] 
-      : null;
+
+    if (item.unavailable || !player) {
+      return (
+        <View style={[styles.card, styles.cardMuted]}>
+          <View style={styles.cardHeader}>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.name}>Athlete no longer available</Text>
+              <Text style={styles.detail}>They were removed, or their guardian's consent is no longer on record.</Text>
+            </View>
+            <TouchableOpacity onPress={() => removeEntry(item.id, 'this athlete')} style={styles.removeBtn} accessibilityRole="button" accessibilityLabel="Remove unavailable athlete from shortlist">
+              <Text style={styles.removeBtnText}>✕</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      );
+    }
+
+    // The server returns evaluations oldest to newest, so the last one is the latest.
+    const latestEval = player.Evaluations && player.Evaluations.length > 0 ? player.Evaluations[player.Evaluations.length - 1] : null;
 
     return (
       <View style={styles.card}>
         <View style={styles.cardHeader}>
-          <View>
-            <Text style={styles.name}>{player.name}</Text>
-            <Text style={styles.detail}>{player.position}</Text>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.name}>{player.displayName}</Text>
+            <Text style={styles.detail}>
+              {player.position || 'Position not set'}{player.age != null ? ` · ${player.age} yrs` : ''}
+            </Text>
           </View>
-          <TouchableOpacity onPress={() => removeEntry(item.id, player.name)} style={styles.removeBtn}>
+          <TouchableOpacity
+            onPress={() => removeEntry(item.id, player.displayName)}
+            style={styles.removeBtn}
+            accessibilityRole="button"
+            accessibilityLabel={`Remove ${player.displayName} from shortlist`}
+          >
             <Text style={styles.removeBtnText}>✕</Text>
           </TouchableOpacity>
         </View>
@@ -96,40 +121,65 @@ export default function ShortlistScreen() {
         {latestEval && (
           <View style={styles.statsRow}>
             <View style={styles.statBox}>
-              <Text style={styles.statLabel}>Pace</Text>
-              <Text style={styles.statValue}>{latestEval.sprintSpeed || '--'}</Text>
+              <Text style={styles.statLabel}>30m Sprint</Text>
+              <Text style={styles.statValue}>{latestEval.sprintSpeed ? `${latestEval.sprintSpeed}s` : '--'}</Text>
             </View>
             <View style={styles.statBox}>
-              <Text style={styles.statLabel}>Tech</Text>
-              <Text style={styles.statValue}>{latestEval.dribblingScore || '--'}/10</Text>
+              <Text style={styles.statLabel}>Ball Control</Text>
+              <Text style={styles.statValue}>{latestEval.dribblingScore ? `${latestEval.dribblingScore}/5` : '--'}</Text>
             </View>
           </View>
         )}
 
-        <View style={styles.notesBox}>
-          <Text style={styles.notesTitle}>My Notes:</Text>
-          <Text style={styles.notesText}>{item.notes}</Text>
-        </View>
+        {item.notes ? (
+          <View style={styles.notesBox}>
+            <Text style={styles.notesTitle}>My Notes:</Text>
+            <Text style={styles.notesText}>{item.notes}</Text>
+          </View>
+        ) : null}
       </View>
     );
   };
 
+  if (notApproved) {
+    return (
+      <SafeAreaView style={styles.container}>
+        <Text style={styles.header}>My Shortlist</Text>
+        <ScoutAccreditationPanel onApproved={() => { setNotApproved(false); setLoading(true); fetchShortlist().finally(() => setLoading(false)); }} />
+      </SafeAreaView>
+    );
+  }
+
   return (
     <SafeAreaView style={styles.container}>
       <Text style={styles.header}>My Shortlist</Text>
-      
-      <FlatList
-        data={shortlist}
-        keyExtractor={(item) => item.id}
-        renderItem={renderItem}
-        refreshControl={ <RefreshControl refreshing={refreshing} onRefresh={onRefresh} /> }
-        ListEmptyComponent={
-          <View style={styles.emptyContainer}>
-            <Text style={styles.emptyText}>Your shortlist is empty.</Text>
-            <Text style={styles.emptySubtext}>Go to the Discover tab to find athletes.</Text>
-          </View>
-        }
-      />
+
+      {loading && shortlist.length === 0 ? (
+        <ActivityIndicator style={{ marginTop: 40 }} size="large" color="#2E8B57" />
+      ) : (
+        <FlatList
+          data={shortlist}
+          keyExtractor={(item) => item.id}
+          renderItem={renderItem}
+          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
+          ListEmptyComponent={
+            error ? (
+              <View style={styles.emptyContainer}>
+                <Text style={styles.emptyText}>Couldn't load your shortlist</Text>
+                <Text style={styles.emptySubtext}>{error}</Text>
+                <TouchableOpacity style={styles.retryBtn} onPress={onRefresh} accessibilityRole="button">
+                  <Text style={styles.retryText}>Try again</Text>
+                </TouchableOpacity>
+              </View>
+            ) : (
+              <View style={styles.emptyContainer}>
+                <Text style={styles.emptyText}>Your shortlist is empty.</Text>
+                <Text style={styles.emptySubtext}>Go to the Discover tab to find athletes.</Text>
+              </View>
+            )
+          }
+        />
+      )}
     </SafeAreaView>
   );
 }
@@ -138,6 +188,7 @@ const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#f4f4f4', padding: 15 },
   header: { fontSize: 24, fontWeight: 'bold', textAlign: 'center', marginVertical: 15, color: '#333' },
   card: { backgroundColor: '#fff', padding: 15, borderRadius: 10, marginBottom: 15, elevation: 2 },
+  cardMuted: { backgroundColor: '#F3F4F6', elevation: 0 },
   cardHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 15 },
   name: { fontSize: 18, fontWeight: 'bold', color: '#111' },
   detail: { fontSize: 14, color: '#666', marginTop: 2 },
@@ -150,7 +201,9 @@ const styles = StyleSheet.create({
   notesBox: { backgroundColor: '#eef5fe', padding: 12, borderRadius: 8 },
   notesTitle: { fontSize: 12, fontWeight: 'bold', color: '#0056b3', marginBottom: 4 },
   notesText: { fontSize: 14, color: '#333' },
-  emptyContainer: { alignItems: 'center', marginTop: 60 },
+  emptyContainer: { alignItems: 'center', marginTop: 60, paddingHorizontal: 20 },
   emptyText: { fontSize: 18, fontWeight: 'bold', color: '#555', marginBottom: 8 },
-  emptySubtext: { fontSize: 14, color: '#888' }
+  emptySubtext: { fontSize: 14, color: '#888', textAlign: 'center' },
+  retryBtn: { marginTop: 14, backgroundColor: '#2E8B57', paddingHorizontal: 18, paddingVertical: 10, borderRadius: 8 },
+  retryText: { color: '#fff', fontWeight: 'bold' },
 });

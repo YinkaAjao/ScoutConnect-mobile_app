@@ -38,6 +38,13 @@ export default function ScoutLayout() {
           tabBarIcon: ({ color, size }) => <Ionicons name="star-outline" size={size || 22} color={color} /> 
         }} 
       />
+      <Tabs.Screen
+        name="requests"
+        options={{
+          title: 'Requests',
+          tabBarIcon: ({ color, size }) => <Ionicons name="mail-outline" size={size || 22} color={color} />
+        }}
+      />
       <Tabs.Screen 
         name="profile" 
         options={{ 

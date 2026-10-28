@@ -1,8 +1,21 @@
-import React from 'react';
+import React, { useEffect } from 'react';
+import { AppState } from 'react-native';
 import { Tabs } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
+import { refreshVerificationCue, useClubTabBadge } from '../../lib/verificationSeen';
 
 export default function CoachLayout() {
+  const clubBadge = useClubTabBadge(); // new verification decision + scout requests waiting
+
+  // Look for a new verification decision at start-up and whenever the app comes back to the foreground.
+  useEffect(() => {
+    refreshVerificationCue();
+    const subscription = AppState.addEventListener('change', (state) => {
+      if (state === 'active') refreshVerificationCue();
+    });
+    return () => subscription.remove();
+  }, []);
+
   return (
     <Tabs screenOptions={{ tabBarActiveTintColor: '#2E8B57', headerShown: false }}>
       <Tabs.Screen
@@ -23,6 +36,8 @@ export default function CoachLayout() {
         name="club"
         options={{
           title: 'Club',
+          tabBarBadge: clubBadge > 0 ? clubBadge : undefined,
+          tabBarAccessibilityLabel: clubBadge > 0 ? `Club, ${clubBadge} update${clubBadge === 1 ? '' : 's'} waiting` : 'Club',
           tabBarIcon: ({ color, size }) => <Ionicons name="shield-half-outline" size={size} color={color} />,
         }}
       />

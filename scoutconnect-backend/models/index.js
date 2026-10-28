@@ -7,7 +7,10 @@ const User = sequelize.define('User', {
   username: { type: DataTypes.STRING, allowNull: false },
   email: { type: DataTypes.STRING, unique: true, allowNull: false },
   phone: { type: DataTypes.STRING },
-  role: { type: DataTypes.ENUM('Coach', 'Scout'), allowNull: false }
+  role: { type: DataTypes.ENUM('Coach', 'Scout'), allowNull: false },
+  // Defaults keep every pre-existing coach as an active owner; joiners are set to Member/Pending explicitly.
+  clubRole: { type: DataTypes.STRING, defaultValue: 'Owner' }, // 'Owner' | 'Member'
+  membershipStatus: { type: DataTypes.STRING, defaultValue: 'Active' } // 'Active' | 'Pending' | 'Rejected'
   // Password removed; securely handled by Supabase Auth
 });
 
@@ -17,9 +20,17 @@ const Club = sequelize.define('Club', {
   region: { type: DataTypes.STRING },
   contactEmail: { type: DataTypes.STRING },
   contactPhone: { type: DataTypes.STRING },
+  entityType: { type: DataTypes.STRING }, // e.g. 'Grassroots Academy'; see ENTITY_TYPES in server.js
   isVerified: { type: DataTypes.BOOLEAN, defaultValue: false },
   standingStatus: { type: DataTypes.ENUM('Good', 'Penalized', 'Suspended'), defaultValue: 'Good' },
-  trustScore: { type: DataTypes.INTEGER, defaultValue: 100 }
+  trustScore: { type: DataTypes.INTEGER, defaultValue: 100 },
+  // Verification review. `isVerified` stays the flag the rest of the app reads; these record how it got there.
+  verificationStatus: { type: DataTypes.STRING, defaultValue: 'Unverified' }, // Unverified | Submitted | Verified | Rejected
+  verificationStatement: { type: DataTypes.TEXT },
+  verificationSubmittedAt: { type: DataTypes.DATE },
+  verifiedAt: { type: DataTypes.DATE },
+  verifiedBy: { type: DataTypes.STRING }, // admin's Supabase user id
+  verificationRejectionReason: { type: DataTypes.TEXT }
 });
 
 const Player = sequelize.define('Player', {
@@ -28,7 +39,15 @@ const Player = sequelize.define('Player', {
   dateOfBirth: { type: DataTypes.DATEONLY, allowNull: false }, 
   position: { type: DataTypes.STRING, allowNull: false },
   profilePhoto: { type: DataTypes.STRING },
-  highlightVideo: { type: DataTypes.STRING }
+  highlightVideo: { type: DataTypes.STRING },
+  // Scouts only see an athlete once a guardian's consent is recorded. NULL = existed before this rule, covered by a grace period.
+  consentStatus: { type: DataTypes.STRING }, // 'Recorded' | 'Missing' | NULL (legacy)
+  consentGuardian: { type: DataTypes.STRING },
+  consentRecordedAt: { type: DataTypes.DATE },
+  consentRecordedBy: { type: DataTypes.STRING },
+  consentGraceUntil: { type: DataTypes.DATE },
+  scoutHidden: { type: DataTypes.BOOLEAN },
+  scoutHiddenReason: { type: DataTypes.STRING }
 });
 
 const Evaluation = sequelize.define('Evaluation', {
@@ -43,8 +62,9 @@ const Evaluation = sequelize.define('Evaluation', {
   strengths: { type: DataTypes.TEXT },
   areasForImprovement: { type: DataTypes.TEXT },
   checklistData: { type: DataTypes.JSONB },
-  coachSignature: { type: DataTypes.STRING }
-});
+  coachSignature: { type: DataTypes.STRING },
+  clientId: { type: DataTypes.STRING } // device-generated id; makes re-sent sync records idempotent
+}, { indexes: [{ unique: true, fields: ['clientId'] }] });
 
 const MatchStat = sequelize.define('MatchStat', {
   id: { type: DataTypes.UUID, defaultValue: DataTypes.UUIDV4, primaryKey: true },
@@ -55,14 +75,16 @@ const MatchStat = sequelize.define('MatchStat', {
   minutesPlayed: { type: DataTypes.INTEGER, defaultValue: 0 },
   goals: { type: DataTypes.INTEGER, defaultValue: 0 },
   assists: { type: DataTypes.INTEGER, defaultValue: 0 },
-  cleanSheet: { type: DataTypes.BOOLEAN, defaultValue: false }
-});
+  cleanSheet: { type: DataTypes.BOOLEAN, defaultValue: false },
+  clientId: { type: DataTypes.STRING }
+}, { indexes: [{ unique: true, fields: ['clientId'] }] });
 
 const Achievement = sequelize.define('Achievement', {
   id: { type: DataTypes.UUID, defaultValue: DataTypes.UUIDV4, primaryKey: true },
   title: { type: DataTypes.STRING, allowNull: false }, 
-  year: { type: DataTypes.INTEGER }
-});
+  year: { type: DataTypes.INTEGER },
+  clientId: { type: DataTypes.STRING }
+}, { indexes: [{ unique: true, fields: ['clientId'] }] });
 
 const Shortlist = sequelize.define('Shortlist', {
   id: { type: DataTypes.UUID, defaultValue: DataTypes.UUIDV4, primaryKey: true },
@@ -74,8 +96,69 @@ const Flag = sequelize.define('Flag', {
   reporterId: { type: DataTypes.UUID, allowNull: false },
   playerId: { type: DataTypes.UUID, allowNull: false },
   reason: { type: DataTypes.STRING, allowNull: false },
-  status: { type: DataTypes.ENUM('Pending', 'Resolved', 'Dismissed'), defaultValue: 'Pending' }
+  status: { type: DataTypes.ENUM('Pending', 'Resolved', 'Dismissed'), defaultValue: 'Pending' },
+  category: { type: DataTypes.STRING },
+  resolutionNote: { type: DataTypes.TEXT },
+  resolvedBy: { type: DataTypes.STRING },
+  resolvedAt: { type: DataTypes.DATE }
 });
+
+const VerificationDocument = sequelize.define('VerificationDocument', {
+  id: { type: DataTypes.UUID, defaultValue: DataTypes.UUIDV4, primaryKey: true },
+  clubId: { type: DataTypes.UUID }, // set for club verification
+  scoutUserId: { type: DataTypes.STRING }, // set for scout accreditation
+  docType: { type: DataTypes.STRING, allowNull: false },
+  storagePath: { type: DataTypes.STRING, allowNull: false }, // path inside the private verification-docs bucket
+  fileName: { type: DataTypes.STRING },
+  uploadedBy: { type: DataTypes.STRING }
+});
+
+// Append-only audit trail of every verification decision.
+const VerificationEvent = sequelize.define('VerificationEvent', {
+  id: { type: DataTypes.UUID, defaultValue: DataTypes.UUIDV4, primaryKey: true },
+  clubId: { type: DataTypes.UUID },
+  scoutUserId: { type: DataTypes.STRING },
+  actorId: { type: DataTypes.STRING },
+  action: { type: DataTypes.STRING, allowNull: false }, // Submitted | Verified | Rejected | Revoked | Reset (clubs); Submitted | Approved | Rejected | Suspended | Reinstated (scouts)
+  note: { type: DataTypes.TEXT }
+});
+
+// A scout must be accredited before seeing any athlete data. No row = never applied.
+const ScoutProfile = sequelize.define('ScoutProfile', {
+  id: { type: DataTypes.UUID, defaultValue: DataTypes.UUIDV4, primaryKey: true },
+  userId: { type: DataTypes.UUID, allowNull: false },
+  organisation: { type: DataTypes.STRING },
+  orgType: { type: DataTypes.STRING },
+  licenceNumber: { type: DataTypes.STRING },
+  statement: { type: DataTypes.TEXT },
+  status: { type: DataTypes.STRING, defaultValue: 'Pending' }, // Pending | Submitted | Approved | Rejected | Suspended
+  submittedAt: { type: DataTypes.DATE },
+  decidedAt: { type: DataTypes.DATE },
+  decidedBy: { type: DataTypes.STRING },
+  rejectionReason: { type: DataTypes.TEXT }
+}, { indexes: [{ unique: true, fields: ['userId'] }] });
+
+// A scout asks a club to release an athlete's identity and the club's contact details.
+const ContactRequest = sequelize.define('ContactRequest', {
+  id: { type: DataTypes.UUID, defaultValue: DataTypes.UUIDV4, primaryKey: true },
+  scoutId: { type: DataTypes.UUID, allowNull: false },
+  playerId: { type: DataTypes.UUID, allowNull: false },
+  clubId: { type: DataTypes.UUID, allowNull: false },
+  message: { type: DataTypes.TEXT, allowNull: false },
+  status: { type: DataTypes.STRING, defaultValue: 'Pending' }, // Pending | Accepted | Declined
+  responseNote: { type: DataTypes.TEXT },
+  respondedBy: { type: DataTypes.STRING },
+  respondedAt: { type: DataTypes.DATE }
+});
+
+// One row per scout search, so unusual browsing (scraping) can be spotted. Prune old rows regularly.
+const ScoutAccessLog = sequelize.define('ScoutAccessLog', {
+  id: { type: DataTypes.UUID, defaultValue: DataTypes.UUIDV4, primaryKey: true },
+  scoutId: { type: DataTypes.UUID, allowNull: false },
+  route: { type: DataTypes.STRING },
+  resultCount: { type: DataTypes.INTEGER },
+  athleteIds: { type: DataTypes.JSONB }
+}, { indexes: [{ fields: ['scoutId', 'createdAt'] }, { fields: ['createdAt'] }] });
 
 // --- RELATIONSHIPS ---
 Club.hasMany(User, { foreignKey: 'clubId' });
@@ -96,5 +179,14 @@ Player.hasMany(Flag, { foreignKey: 'playerId' });
 Flag.belongsTo(Player, { foreignKey: 'playerId' });
 User.hasMany(Flag, { foreignKey: 'reporterId' });
 Flag.belongsTo(User, { foreignKey: 'reporterId' });
+Club.hasMany(VerificationDocument, { foreignKey: 'clubId' });
+VerificationDocument.belongsTo(Club, { foreignKey: 'clubId' });
+Club.hasMany(VerificationEvent, { foreignKey: 'clubId' });
+VerificationEvent.belongsTo(Club, { foreignKey: 'clubId' });
+User.hasOne(ScoutProfile, { foreignKey: 'userId' });
+ScoutProfile.belongsTo(User, { foreignKey: 'userId' });
+ContactRequest.belongsTo(User, { as: 'Scout', foreignKey: 'scoutId' });
+ContactRequest.belongsTo(Player, { foreignKey: 'playerId' });
+ContactRequest.belongsTo(Club, { foreignKey: 'clubId' });
 
-module.exports = { sequelize, DataTypes, User, Club, Player, Evaluation, MatchStat, Achievement, Shortlist, Flag };
+module.exports = { sequelize, DataTypes, User, Club, Player, Evaluation, MatchStat, Achievement, Shortlist, Flag, VerificationDocument, VerificationEvent, ScoutProfile, ContactRequest, ScoutAccessLog };
