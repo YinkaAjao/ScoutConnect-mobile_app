@@ -2,7 +2,7 @@
 import React, { useEffect, useState } from 'react';
 import { View, Text, FlatList, StyleSheet, TextInput, TouchableOpacity, RefreshControl, Alert, Dimensions, Image, ActivityIndicator, Modal, ScrollView } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import * as SecureStore from 'expo-secure-store';
+import { getAuthToken } from '../../lib/supabase';
 import { LineChart, ProgressChart } from 'react-native-chart-kit';
 import { Ionicons } from '@expo/vector-icons';
 import { API_BASE, Colors, CardSpec } from '../../constants/designSystem';
@@ -84,7 +84,7 @@ export default function ScoutDiscoverScreen() {
 
   const fetchPlayers = async (pageNum: number, reset: boolean = false) => {
     try {
-      const token = await SecureStore.getItemAsync('userToken');
+      const token = await getAuthToken();
       let queryURL = `${PLAYERS_API}?page=${pageNum}&limit=5`;
       
       if (selectedPosition !== 'All') {
@@ -125,7 +125,7 @@ export default function ScoutDiscoverScreen() {
 
   const handleShortlist = async (playerId: string, playerName: string) => {
     try {
-      const token = await SecureStore.getItemAsync('userToken');
+      const token = await getAuthToken();
       const response = await fetch(SHORTLIST_API, {
         method: 'POST',
         headers: { 

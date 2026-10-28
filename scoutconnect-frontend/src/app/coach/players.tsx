@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { View, Text, FlatList, StyleSheet, RefreshControl, TouchableOpacity } from 'react-native';import { useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import * as SecureStore from 'expo-secure-store';
+import { getAuthToken } from '../../lib/supabase';
 
 interface MatchStat { id: string; competition: string; goals: number; assists: number; minutesPlayed: number; }
 interface Achievement { id: string; title: string; year: number; }
@@ -27,7 +27,7 @@ export default function MyPlayersScreen() {
 
   const fetchRoster = async () => {
     try {
-      const token = await SecureStore.getItemAsync('userToken');
+      const token = await getAuthToken();
       const response = await fetch(ROSTER_API, {
         headers: { 'Authorization': `Bearer ${token}` }
       });

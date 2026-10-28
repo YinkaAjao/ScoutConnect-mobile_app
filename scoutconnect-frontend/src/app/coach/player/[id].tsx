@@ -4,7 +4,7 @@ import { View, Text, StyleSheet, ScrollView, TouchableOpacity, ActivityIndicator
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { LineChart, ProgressChart } from 'react-native-chart-kit';
-import * as SecureStore from 'expo-secure-store';
+import { getAuthToken } from '../../../lib/supabase';
 import { Ionicons } from '@expo/vector-icons';
 import { API_BASE, Colors, CardSpec } from '../../../constants/designSystem';
 
@@ -86,7 +86,7 @@ export default function PlayerProfileScreen() {
 
   const fetchPlayerDetails = async () => {
     try {
-      const token = await SecureStore.getItemAsync('userToken');
+      const token = await getAuthToken();
       const response = await fetch(`${API_BASE}/players/${id}`, {
         headers: { 'Authorization': `Bearer ${token}` }
       });
@@ -109,7 +109,7 @@ export default function PlayerProfileScreen() {
     }
 
     try {
-      const token = await SecureStore.getItemAsync('userToken');
+      const token = await getAuthToken();
       const response = await fetch(`${API_BASE}/flags`, {
         method: 'POST',
         headers: { 

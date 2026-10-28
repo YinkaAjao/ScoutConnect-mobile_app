@@ -3,7 +3,7 @@ import React, { useEffect, useState } from 'react';
 import { StyleSheet, Text, View, TextInput, TouchableOpacity, Alert, ScrollView, Image, ActivityIndicator, Modal, FlatList, Platform } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import NetInfo from '@react-native-community/netinfo';
-import * as SecureStore from 'expo-secure-store';
+import { getAuthToken } from '../../lib/supabase';
 import * as ImagePicker from 'expo-image-picker';
 import { Ionicons } from '@expo/vector-icons';
 import DateTimePicker from '@react-native-community/datetimepicker';
@@ -123,7 +123,7 @@ export default function CoachScreen() {
 
   const fetchCoachClubAndRoster = async () => {
     try {
-      const token = await SecureStore.getItemAsync('userToken');
+      const token = await getAuthToken();
       if (!token) return;
 
       const clubRes = await fetch(CLUB_API, { headers: { 'Authorization': `Bearer ${token}` } });
@@ -244,7 +244,7 @@ export default function CoachScreen() {
         return;
       }
 
-      const token = await SecureStore.getItemAsync('userToken'); 
+      const token = await getAuthToken(); 
 
       const processedRecords = await Promise.all(records.map(async (record: any) => {
         let finalPhotoUrl = record.profilePhoto;

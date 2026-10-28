@@ -21,8 +21,35 @@ app.use((req, res, next) => {
 });
 
 const SUPABASE_JWT_SECRET = process.env.SUPABASE_JWT_SECRET || 'your-supabase-jwt-secret';
-const SUPABASE_URL = process.env.SUPABASE_URL;
-const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY;
+// Pinned (never taken from the token) so a forged `iss` can't point verification at an attacker's keys.
+const SUPABASE_URL = process.env.SUPABASE_URL || 'https://xekggzfumxbqvoyirndd.supabase.co';
+
+// Supabase projects with asymmetric signing keys (ES256/RS256) publish their public keys here.
+const jwksCache = { keys: new Map(), fetchedAt: 0 };
+async function getSigningKey(kid) {
+  if (jwksCache.keys.has(kid)) return jwksCache.keys.get(kid);
+  if (Date.now() - jwksCache.fetchedAt < 60000) return null; // throttle refetches for unknown kids
+  const res = await fetch(`${SUPABASE_URL}/auth/v1/.well-known/jwks.json`);
+  if (!res.ok) throw new Error(`JWKS fetch failed (${res.status})`);
+  const { keys } = await res.json();
+  jwksCache.fetchedAt = Date.now();
+  for (const jwk of keys) jwksCache.keys.set(jwk.kid, crypto.createPublicKey({ key: jwk, format: 'jwk' }));
+  return jwksCache.keys.get(kid) || null;
+}
+
+async function verifySupabaseToken(token) {
+  const decoded = jwt.decode(token, { complete: true });
+  if (!decoded) throw new Error('Malformed token');
+  const { alg, kid } = decoded.header;
+  if (alg === 'HS256') return jwt.verify(token, SUPABASE_JWT_SECRET, { algorithms: ['HS256'] });
+  const key = await getSigningKey(kid);
+  if (!key) throw new Error(`No Supabase signing key found for kid ${kid}`);
+  return jwt.verify(token, key, {
+    algorithms: ['ES256', 'RS256'],
+    issuer: `${SUPABASE_URL}/auth/v1`,
+    audience: 'authenticated'
+  });
+}
 
 const uploadDir = path.join(__dirname, 'uploads');
 if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir);
@@ -45,19 +72,7 @@ const authenticateToken = async (req, res, next) => {
   }
   
   try {
-    let userId;
-    try {
-      userId = jwt.verify(token, SUPABASE_JWT_SECRET).sub;
-    } catch (verifyErr) {
-      // Shared-secret check failed (wrong/missing secret or asymmetric signing keys): ask Supabase Auth to validate.
-      console.log(`⚠️ Local JWT verify failed (${verifyErr.message}); falling back to Supabase Auth.`);
-      if (!SUPABASE_URL || !SUPABASE_ANON_KEY) throw verifyErr;
-      const authRes = await fetch(`${SUPABASE_URL}/auth/v1/user`, {
-        headers: { Authorization: `Bearer ${token}`, apikey: SUPABASE_ANON_KEY }
-      });
-      if (!authRes.ok) throw new Error(`Supabase Auth rejected token (${authRes.status})`);
-      userId = (await authRes.json()).id;
-    }
+    const userId = (await verifySupabaseToken(token)).sub;
     const userRecord = await User.findByPk(userId);
     
     if (!userRecord) {

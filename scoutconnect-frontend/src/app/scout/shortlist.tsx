@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { View, Text, FlatList, StyleSheet, SafeAreaView, TouchableOpacity, Alert, RefreshControl } from 'react-native';
-import * as SecureStore from 'expo-secure-store';
+import { getAuthToken } from '../../lib/supabase';
 
 interface ShortlistEntry {
   id: string;
@@ -25,7 +25,7 @@ export default function ShortlistScreen() {
 
   const fetchShortlist = async () => {
     try {
-      const token = await SecureStore.getItemAsync('userToken');
+      const token = await getAuthToken();
       const response = await fetch(SHORTLIST_API, {
         headers: { 'Authorization': `Bearer ${token}` }
       });
@@ -53,7 +53,7 @@ export default function ShortlistScreen() {
           style: "destructive",
           onPress: async () => {
             try {
-              const token = await SecureStore.getItemAsync('userToken');
+              const token = await getAuthToken();
               const response = await fetch(`${SHORTLIST_API}/${id}`, {
                 method: 'DELETE',
                 headers: { 'Authorization': `Bearer ${token}` }

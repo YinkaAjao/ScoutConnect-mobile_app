@@ -4,6 +4,7 @@ import { View, Text, TouchableOpacity, StyleSheet, ScrollView, ActivityIndicator
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import * as SecureStore from 'expo-secure-store';
+import { getAuthToken } from '../../lib/supabase';
 import { Ionicons } from '@expo/vector-icons';
 import { API_BASE, Colors, CardSpec } from '../../constants/designSystem';
 
@@ -21,7 +22,7 @@ export default function ScoutProfileScreen() {
   const loadScoutStats = async () => {
     setLoading(true);
     try {
-      const token = await SecureStore.getItemAsync('userToken');
+      const token = await getAuthToken();
       if (token) {
         const response = await fetch(`${API_BASE}/shortlist`, {
           headers: { 'Authorization': `Bearer ${token}` }

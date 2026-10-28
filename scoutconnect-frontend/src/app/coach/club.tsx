@@ -1,5 +1,6 @@
 // src/app/coach/club.tsx
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useState } from 'react';
+import { useFocusEffect } from 'expo-router';
 import { View, Text, StyleSheet, ActivityIndicator, ScrollView, Alert } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { getAuthToken } from '../../lib/supabase';
@@ -22,9 +23,12 @@ export default function ClubScreen() {
   const [playerCount, setPlayerCount] = useState(0);
   const [loading, setLoading] = useState(true);
 
-  useEffect(() => {
-    fetchClubInfo();
-  }, []);
+  // Refetch whenever the tab gains focus; the tab stays mounted, so a mount-only fetch keeps stale results.
+  useFocusEffect(
+    useCallback(() => {
+      fetchClubInfo();
+    }, [])
+  );
 
   const fetchClubInfo = async () => {
     try {

@@ -86,6 +86,18 @@ export default function CoachProfileScreen() {
         } else {
           const body = await response.text();
           console.log(`Profile /club failed: ${response.status} ${body}`);
+          // TEMP DEBUG: print token header/claims (never the signature) to diagnose backend 403s
+          try {
+            const dec = (s: string) => JSON.parse(atob(s.replace(/-/g, '+').replace(/_/g, '/')));
+            const [h, p] = token.split('.');
+            const claims = dec(p);
+            console.log('TOKEN DEBUG', JSON.stringify({
+              header: dec(h), iss: claims.iss, aud: claims.aud, role: claims.role,
+              sub: claims.sub, expiresInSec: claims.exp - Math.floor(Date.now() / 1000),
+            }));
+          } catch (e) {
+            console.log('TOKEN DEBUG decode failed:', e);
+          }
         }
       }
     } catch (error) {
