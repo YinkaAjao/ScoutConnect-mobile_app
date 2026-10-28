@@ -5,7 +5,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import * as SecureStore from 'expo-secure-store';
 import { Ionicons } from '@expo/vector-icons';
-import { createClient } from '@supabase/supabase-js';
+import { supabase, getAuthToken } from '../../lib/supabase';
 import { API_BASE, Colors, CardSpec } from '../../constants/designSystem';
 import { 
   initDB, 
@@ -15,9 +15,6 @@ import {
   getUnsyncedAchievements 
 } from '../../../database';
 
-const SUPABASE_URL = process.env.EXPO_PUBLIC_SUPABASE_URL || 'https://placeholder.supabase.co';
-const SUPABASE_ANON_KEY = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY || 'placeholder';
-const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
 interface ClubInfo {
   id: string;
@@ -70,7 +67,10 @@ export default function CoachProfileScreen() {
         fallbackName = session.user.user_metadata?.username || fallbackEmail.split('@')[0] || fallbackName;
       }
 
-      const token = await SecureStore.getItemAsync('userToken');
+      setCoachDisplayName(fallbackName);
+      setCoachEmail(fallbackEmail);
+
+      const token = await getAuthToken();
       if (token) {
         const response = await fetch(`${API_BASE}/club`, {
           headers: { 'Authorization': `Bearer ${token}` }
@@ -79,15 +79,13 @@ export default function CoachProfileScreen() {
           const data = await response.json();
           setClub(data.club);
           setPlayerCount(data.playerCount || 0);
-          
+
           // Use the DB's profile if it exists, otherwise use the Supabase token we extracted above
-          const dbName = data.coachProfile?.username;
-          const dbEmail = data.coachProfile?.email;
-          setCoachDisplayName(dbName || fallbackName);
-          setCoachEmail(dbEmail || fallbackEmail);
+          setCoachDisplayName(data.coachProfile?.username || fallbackName);
+          setCoachEmail(data.coachProfile?.email || fallbackEmail);
         } else {
-          setCoachDisplayName(fallbackName);
-          setCoachEmail(fallbackEmail);
+          const body = await response.text();
+          console.log(`Profile /club failed: ${response.status} ${body}`);
         }
       }
     } catch (error) {

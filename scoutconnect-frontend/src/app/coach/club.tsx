@@ -1,8 +1,8 @@
 // src/app/coach/club.tsx
 import React, { useEffect, useState } from 'react';
-import { View, Text, StyleSheet, ActivityIndicator, ScrollView } from 'react-native';
+import { View, Text, StyleSheet, ActivityIndicator, ScrollView, Alert } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import * as SecureStore from 'expo-secure-store';
+import { getAuthToken } from '../../lib/supabase';
 import { Ionicons } from '@expo/vector-icons';
 import { API_BASE, Colors, CardSpec } from '../../constants/designSystem';
 
@@ -28,17 +28,20 @@ export default function ClubScreen() {
 
   const fetchClubInfo = async () => {
     try {
-      const token = await SecureStore.getItemAsync('userToken');
+      const token = await getAuthToken();
       const response = await fetch(CLUB_API, {
         headers: { 'Authorization': `Bearer ${token}` }
       });
       const data = await response.json();
-      
+
       if (response.ok && data?.club) {
         setClub(data.club);
         setPlayerCount(data.playerCount || 0);
+      } else {
+        Alert.alert(`Club request failed (${response.status})`, data?.error || 'Unexpected response from server.');
       }
     } catch (error) {
+      Alert.alert('Network Fetch Failed', String(error));
       console.error('Error fetching club info:', error);
     } finally {
       setLoading(false);

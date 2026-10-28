@@ -21,6 +21,8 @@ app.use((req, res, next) => {
 });
 
 const SUPABASE_JWT_SECRET = process.env.SUPABASE_JWT_SECRET || 'your-supabase-jwt-secret';
+const SUPABASE_URL = process.env.SUPABASE_URL;
+const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY;
 
 const uploadDir = path.join(__dirname, 'uploads');
 if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir);
@@ -43,11 +45,23 @@ const authenticateToken = async (req, res, next) => {
   }
   
   try {
-    const decoded = jwt.verify(token, SUPABASE_JWT_SECRET);
-    const userRecord = await User.findByPk(decoded.sub);
+    let userId;
+    try {
+      userId = jwt.verify(token, SUPABASE_JWT_SECRET).sub;
+    } catch (verifyErr) {
+      // Shared-secret check failed (wrong/missing secret or asymmetric signing keys): ask Supabase Auth to validate.
+      console.log(`⚠️ Local JWT verify failed (${verifyErr.message}); falling back to Supabase Auth.`);
+      if (!SUPABASE_URL || !SUPABASE_ANON_KEY) throw verifyErr;
+      const authRes = await fetch(`${SUPABASE_URL}/auth/v1/user`, {
+        headers: { Authorization: `Bearer ${token}`, apikey: SUPABASE_ANON_KEY }
+      });
+      if (!authRes.ok) throw new Error(`Supabase Auth rejected token (${authRes.status})`);
+      userId = (await authRes.json()).id;
+    }
+    const userRecord = await User.findByPk(userId);
     
     if (!userRecord) {
-      console.log(`❌ Auth Blocked: Token valid, but UUID ${decoded.sub} missing in Postgres DB.`);
+      console.log(`❌ Auth Blocked: Token valid, but UUID ${userId} missing in Postgres DB.`);
       return res.status(404).json({ error: 'User profile not found in Postgres.' });
     }
     
