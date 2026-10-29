@@ -2,7 +2,8 @@
 
 | | |
 |---|---|
-| **Walkthrough video** | |
+| **Walkthrough video** | https://youtu.be/IDfQxQfd-8c |
+| **Technical Report** | https://docs.google.com/document/d/1D2itct5O1fGHOlLBtnscEwvhf_7-UgiZCHk6hgp5CJA/edit?usp=sharing |
 | **Live API** | https://scoutconnect.onrender.com/api/health (free tier: the first request after idle can take about 30 seconds) |
 
 ## 1. Overview

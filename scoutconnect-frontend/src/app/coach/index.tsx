@@ -533,10 +533,11 @@ export default function CoachScreen() {
 
     await checkUnsyncedRecords();
 
+    resetEvaluationForm();
+
     if (isDraftFlag === 1) {
-      Alert.alert('Draft Saved', `Progress for ${fullName} (Stage ${currentStage}/5) saved locally.`);
+      Alert.alert('Draft Saved', `Progress for ${fullName} (Stage ${currentStage}/5) saved locally. Tap it under In-Progress Drafts to resume.`);
     } else {
-      resetEvaluationForm();
       Alert.alert('Evaluation Queued', `${fullName}'s full evaluation checklist is finalized and queued for sync.`);
       triggerSync();
     }
