@@ -14,8 +14,18 @@ async function provisionUser(claims) {
   }
   const p = parsed.profile;
 
+  // Transaction-scoped Postgres advisory lock: concurrent callers with the same key queue up until commit.
+  const lock = (key, transaction) =>
+    sequelize.query('SELECT pg_advisory_xact_lock(hashtext(:key))', { replacements: { key }, transaction });
+
   return sequelize.transaction(async (transaction) => {
     const base = { id: p.id, username: p.username, email: p.email, phone: p.phone, role: p.role };
+
+    // Parallel first requests for one user would each create a club (findOrCreate swallows the lost race
+    // and commits the loser's club as an orphan), so serialise per user and bail if the profile now exists.
+    await lock(`user:${p.id}`, transaction);
+    const existing = await User.findByPk(p.id, { transaction });
+    if (existing) return existing;
 
     if (p.role === 'Scout') {
       const [user] = await User.findOrCreate({ where: { id: p.id }, defaults: base, transaction });
@@ -33,6 +43,7 @@ async function provisionUser(claims) {
       }
     } else {
       // Registering a name that already exists is a request to join it, never a takeover.
+      await lock(`club:${p.newClub.name.toLowerCase()}`, transaction);
       club = await Club.findOne({ where: byLowerName(p.newClub.name), transaction });
       if (!club) {
         club = await Club.create({ ...p.newClub, isVerified: false }, { transaction });

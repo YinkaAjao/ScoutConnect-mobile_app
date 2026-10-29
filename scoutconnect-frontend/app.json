@@ -1,7 +1,7 @@
 {
   "expo": {
-    "name": "scoutconnect-frontend",
-    "slug": "scoutconnect-frontend",
+    "name": "scoutconnect",
+    "slug": "scoutconnect",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
@@ -17,7 +17,8 @@
         "backgroundImage": "./assets/images/android-icon-background.png",
         "monochromeImage": "./assets/images/android-icon-monochrome.png"
       },
-      "predictiveBackGestureEnabled": false
+      "predictiveBackGestureEnabled": false,
+      "package": "com.yinkaajao.scoutconnect"
     },
     "web": {
       "output": "static",
@@ -42,6 +43,12 @@
     "experiments": {
       "typedRoutes": true,
       "reactCompiler": true
+    },
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "7c52c980-cd86-426f-94f4-a661642a726a"
+      }
     }
   }
 }
