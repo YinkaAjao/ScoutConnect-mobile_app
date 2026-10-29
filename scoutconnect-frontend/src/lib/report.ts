@@ -43,7 +43,7 @@ export interface ReportMatchStat {
 }
 
 export interface ReportInput {
-  /** A scout's report only ever contains what a scout may see: no coach names, notes or biometrics. */
+  /** A scout's report only ever contains what a scout may see: no coach names, notes or biometrics (height and weight only when `sharedBody` is passed). */
   audience: 'coach' | 'scout';
   name: string;
   position?: string | null;
@@ -54,6 +54,8 @@ export interface ReportInput {
   evaluations: ReportEvaluation[];
   matchStats: ReportMatchStat[];
   achievements: { title: string; year?: number | null }[];
+  /** Height and weight for a scout's report. Pass them only once the club has accepted that scout's contact request. */
+  sharedBody?: { heightCm?: number | null; weightKg?: number | null };
   /** The coach's private notes (strengths, areas for improvement). Ignored for scouts. */
   includeNotes?: boolean;
   generatedAt?: Date;
@@ -130,7 +132,13 @@ export const buildReportHtml = (input: ReportInput): string => {
   ].filter(Boolean).map(escapeHtml).join(' · ');
 
   const bio = latest?.checklistData;
-  const biometrics = isCoach && bio
+  const sharedBody = !isCoach ? input.sharedBody : undefined;
+  const biometrics = !isCoach
+    ? [
+        sharedBody?.heightCm && `Height: ${sharedBody.heightCm} cm`,
+        sharedBody?.weightKg && `Weight: ${sharedBody.weightKg} kg`,
+      ].filter(Boolean)
+    : bio
     ? [
         bio.dominantFoot && `Dominant foot: ${bio.dominantFoot}`,
         bio.sprint10m && `10m sprint: ${bio.sprint10m}s`,

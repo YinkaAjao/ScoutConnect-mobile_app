@@ -8,6 +8,7 @@ import { POSITION_CATEGORIES } from '../../constants/positions';
 import EditAthleteModal from '../../components/EditAthleteModal';
 import { confirmRemoveAthlete } from '../../lib/roster';
 import { consentBadge } from '../../lib/consent';
+import { ageFromDob } from '../../lib/age';
 
 interface MatchStat { id: string; goals: number; assists: number; }
 interface Achievement { id: string; }
@@ -32,6 +33,9 @@ const CONSENT_COLORS = {
   warn: { bg: '#FEF3C7', fg: '#B45309', icon: 'time-outline' },
   bad: { bg: '#FEE2E2', fg: '#B91C1C', icon: 'eye-off-outline' },
 } as const;
+
+// Short pill text for the compact card; the full explanation stays in the accessibility label and the edit screen.
+const CONSENT_SHORT = { ok: 'Consent on file', warn: 'Consent needed', bad: 'Hidden from scouts' } as const;
 
 
 export default function MyPlayersScreen() {
@@ -115,68 +119,57 @@ export default function MyPlayersScreen() {
     const totalAssists = item.MatchStats?.reduce((sum, stat) => sum + stat.assists, 0) || 0;
     const totalTrophies = item.Achievements?.length || 0;
 
+    const badge = consentBadge(item);
+    const color = CONSENT_COLORS[badge.tone];
+
     return (
-      <TouchableOpacity
-        style={styles.card}
-        onPress={() => router.push(`/coach/player/${item.id}`)}
-        accessibilityRole="button"
-        accessibilityLabel={`Open ${item.name}, ${item.position}`}
-      >
-        <View style={styles.cardHeader}>
-          <Text style={styles.name}>{item.name}</Text>
-          <Text style={styles.positionBadge}>{item.position}</Text>
-        </View>
-        <Text style={styles.dob}>DOB: {item.dateOfBirth}</Text>
-        {(() => {
-          const badge = consentBadge(item);
-          const color = CONSENT_COLORS[badge.tone];
-          return (
-            <TouchableOpacity
-              style={[styles.consentPill, { backgroundColor: color.bg }]}
-              onPress={() => setEditingPlayer(item)}
-              accessibilityRole="button"
-              accessibilityLabel={`${badge.label}. Tap to edit consent.`}
-            >
-              <Ionicons name={color.icon} size={14} color={color.fg} />
-              <Text style={[styles.consentPillText, { color: color.fg }]}>{badge.label}</Text>
+      <View style={styles.card}>
+        <TouchableOpacity
+          style={styles.main}
+          onPress={() => router.push(`/coach/player/${item.id}`)}
+          accessibilityRole="button"
+          accessibilityLabel={`Open ${item.name}, ${item.position}`}
+        >
+          <View style={styles.avatar}>
+            <Text style={styles.avatarText}>{item.name.charAt(0).toUpperCase()}</Text>
+          </View>
+          <View style={styles.info}>
+            <Text style={styles.name} numberOfLines={1}>{item.name}</Text>
+            <Text style={styles.detail} numberOfLines={1}>{item.position}{ageFromDob(item.dateOfBirth) != null ? ` · ${ageFromDob(item.dateOfBirth)} yrs` : ''}</Text>
+            <Text style={styles.detail} numberOfLines={1}>
+              {totalGoals} goal{totalGoals === 1 ? '' : 's'} · {totalAssists} assist{totalAssists === 1 ? '' : 's'} · {totalTrophies} medal{totalTrophies === 1 ? '' : 's'}
+            </Text>
+          </View>
+        </TouchableOpacity>
+
+        <View style={styles.side}>
+          <View style={styles.iconRow}>
+            <TouchableOpacity style={styles.iconBtn} onPress={() => setEditingPlayer(item)} accessibilityRole="button" accessibilityLabel={`Edit ${item.name}`}>
+              <Ionicons name="create-outline" size={18} color="#2E8B57" />
             </TouchableOpacity>
-          );
-        })()}
-
-        <View style={styles.statsRow}>
-          <View style={styles.statBox}>
-            <Text style={styles.statLabel}>Goals</Text>
-            <Text style={styles.statValue}>{totalGoals}</Text>
+            <TouchableOpacity
+              style={styles.iconBtn}
+              onPress={() => confirmRemoveAthlete(item, () => {
+                setRoster((prev) => prev.filter((p) => p.id !== item.id));
+                setTotalItems((n) => Math.max(0, n - 1));
+              })}
+              accessibilityRole="button"
+              accessibilityLabel={`Remove ${item.name} from roster`}
+            >
+              <Ionicons name="trash-outline" size={18} color="#B91C1C" />
+            </TouchableOpacity>
           </View>
-          <View style={styles.statBox}>
-            <Text style={styles.statLabel}>Assists</Text>
-            <Text style={styles.statValue}>{totalAssists}</Text>
-          </View>
-          <View style={styles.statBox}>
-            <Text style={styles.statLabel}>Medals</Text>
-            <Text style={styles.statValue}>{totalTrophies}</Text>
-          </View>
-        </View>
-
-        <View style={styles.actionsRow}>
-          <TouchableOpacity style={styles.actionBtn} onPress={() => setEditingPlayer(item)} accessibilityRole="button" accessibilityLabel={`Edit ${item.name}`}>
-            <Ionicons name="create-outline" size={16} color="#2E8B57" />
-            <Text style={styles.actionText}>Edit</Text>
-          </TouchableOpacity>
           <TouchableOpacity
-            style={styles.actionBtn}
-            onPress={() => confirmRemoveAthlete(item, () => {
-              setRoster((prev) => prev.filter((p) => p.id !== item.id));
-              setTotalItems((n) => Math.max(0, n - 1));
-            })}
+            style={[styles.consentPill, { backgroundColor: color.bg }]}
+            onPress={() => setEditingPlayer(item)}
             accessibilityRole="button"
-            accessibilityLabel={`Remove ${item.name} from roster`}
+            accessibilityLabel={`${badge.label}. Tap to edit consent.`}
           >
-            <Ionicons name="trash-outline" size={16} color="#B91C1C" />
-            <Text style={[styles.actionText, { color: '#B91C1C' }]}>Remove</Text>
+            <Ionicons name={color.icon} size={12} color={color.fg} />
+            <Text style={[styles.consentPillText, { color: color.fg }]} numberOfLines={1}>{CONSENT_SHORT[badge.tone]}</Text>
           </TouchableOpacity>
         </View>
-      </TouchableOpacity>
+      </View>
     );
   };
 
@@ -336,22 +329,20 @@ const styles = StyleSheet.create({
   optionTextActive: { fontWeight: 'bold', color: '#2E8B57' },
   closeBtn: { marginTop: 12, alignItems: 'center', paddingVertical: 12, borderRadius: 10, backgroundColor: '#E5E7EB' },
   closeText: { fontWeight: 'bold', color: '#333' },
-  card: { backgroundColor: '#fff', padding: 15, borderRadius: 10, marginBottom: 15, elevation: 2, borderLeftWidth: 5, borderLeftColor: '#2E8B57' },
-  cardHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  name: { fontSize: 18, fontWeight: 'bold', color: '#111', flexShrink: 1, marginRight: 8 },
-  positionBadge: { backgroundColor: '#eef5fe', color: '#0056b3', paddingHorizontal: 10, paddingVertical: 4, borderRadius: 12, fontSize: 12, fontWeight: 'bold', overflow: 'hidden' },
-  consentPill: { flexDirection: 'row', alignItems: 'center', gap: 6, alignSelf: 'flex-start', paddingHorizontal: 10, paddingVertical: 5, borderRadius: 12, marginBottom: 12 },
-  consentPillText: { fontSize: 11, fontWeight: 'bold', flexShrink: 1 },
+  card: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#fff', borderRadius: 14, marginBottom: 10, padding: 12, gap: 8, elevation: 2, shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.08, shadowRadius: 4 },
+  main: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: 12 },
+  avatar: { width: 46, height: 46, borderRadius: 23, backgroundColor: '#2E8B57', alignItems: 'center', justifyContent: 'center' },
+  avatarText: { color: '#fff', fontSize: 18, fontWeight: 'bold' },
+  info: { flex: 1 },
+  name: { fontSize: 16, fontWeight: 'bold', color: '#111' },
+  detail: { fontSize: 12, color: '#666', marginTop: 1 },
+  side: { alignItems: 'flex-end', gap: 6 },
+  iconRow: { flexDirection: 'row', gap: 2 },
+  iconBtn: { padding: 6 },
+  consentPill: { flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 8, paddingVertical: 3, borderRadius: 10 },
+  consentPillText: { fontSize: 10, fontWeight: 'bold', flexShrink: 1 },
   consentBanner: { flexDirection: 'row', alignItems: 'flex-start', gap: 8, backgroundColor: '#FEF3C7', padding: 12, borderRadius: 8, marginBottom: 10 },
   consentBannerText: { flex: 1, fontSize: 12, color: '#92400E', lineHeight: 17 },
-  dob: { fontSize: 13, color: '#666', marginTop: 4, marginBottom: 15 },
-  statsRow: { flexDirection: 'row', justifyContent: 'space-between', borderTopWidth: 1, borderTopColor: '#eee', paddingTop: 15 },
-  statBox: { alignItems: 'center', flex: 1 },
-  statLabel: { fontSize: 12, color: '#888', fontWeight: '600' },
-  statValue: { fontSize: 18, color: '#2E8B57', fontWeight: 'bold', marginTop: 4 },
-  actionsRow: { flexDirection: 'row', justifyContent: 'flex-end', gap: 16, borderTopWidth: 1, borderTopColor: '#eee', marginTop: 12, paddingTop: 10 },
-  actionBtn: { flexDirection: 'row', alignItems: 'center', gap: 4, paddingVertical: 4, paddingHorizontal: 6 },
-  actionText: { fontSize: 13, fontWeight: 'bold', color: '#2E8B57' },
   emptyContainer: { alignItems: 'center', marginTop: 50 },
   emptyText: { fontSize: 18, fontWeight: 'bold', color: '#555', marginBottom: 8 },
   emptySubtext: { fontSize: 14, color: '#888', textAlign: 'center', paddingHorizontal: 20 },

@@ -62,3 +62,12 @@ test('a player with no evaluations still produces a report', () => {
   const html = buildReportHtml({ ...base, audience: 'coach', evaluations: [], matchStats: [], achievements: [] });
   assert.ok(html.includes('No evaluations have been logged yet'));
 });
+
+test('a scout report shows height and weight only when they were shared, and still never the coach-only biometrics', () => {
+  const without = buildReportHtml({ ...base, audience: 'scout' });
+  assert.ok(!without.includes('Height') && !without.includes('Weight'));
+
+  const shared = buildReportHtml({ ...base, audience: 'scout', sharedBody: { heightCm: 181, weightKg: 70 } });
+  assert.ok(shared.includes('Height: 181 cm') && shared.includes('Weight: 70 kg'));
+  assert.ok(!shared.includes('Dominant foot') && !shared.includes('178'));
+});

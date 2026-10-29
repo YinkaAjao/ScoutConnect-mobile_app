@@ -92,6 +92,28 @@ test('evaluations are sorted oldest to newest and carry only numeric ratings', (
   assert.equal(dto.Evaluations[0].checklistData, null);
 });
 
+test('body measurements reach scouts field by field, range-checked, with the coach\'s notes left out', () => {
+  const row = athlete();
+  row.Evaluations[0].checklistData = {
+    averages: { technical: 4 }, heightCm: 178, weightKg: 66.5, dominantFoot: 'Left', sprint10m: 1.8, bleepLevel: 99,
+    evaluatorName: 'Coach X', strengths: 'private note', coachSignature: 'abc'
+  };
+  const accepted = { id: 'r1', status: 'Accepted' };
+  const dto = toScoutAthlete(row, { now: NOW, request: accepted });
+  const latest = dto.Evaluations.find((e) => e.id === 'e2');
+  assert.deepEqual(latest.checklistData, { averages: { technical: 4 }, body: { heightCm: 178, weightKg: 66.5, sprint10m: 1.8, dominantFoot: 'Left' } }); // bleep 99 is implausible
+  assert.ok(!JSON.stringify(dto).includes('private note'));
+
+  // Height and weight are held back until the club accepts that scout's request; the other measurements are not.
+  for (const request of [undefined, { id: 'r2', status: 'Pending' }, { id: 'r3', status: 'Declined', respondedAt: '2026-01-01' }]) {
+    const hidden = toScoutAthlete(row, { now: NOW, request }).Evaluations.find((e) => e.id === 'e2');
+    assert.deepEqual(hidden.checklistData.body, { sprint10m: 1.8, dominantFoot: 'Left' });
+  }
+
+  row.Evaluations[0].checklistData = { heightCm: 'tall', weightKg: 5, dominantFoot: 'Banana' };
+  assert.equal(toScoutAthlete(row, { now: NOW, request: accepted }).Evaluations.find((e) => e.id === 'e2').checklistData, null);
+});
+
 test('an accepted request reveals the full name and the club contact, and nothing else changes', () => {
   const dto = toScoutAthlete(athlete(), { now: NOW, request: { id: 'r1', status: 'Accepted', responseNote: 'Call after 5pm' } });
   assert.equal(dto.displayName, 'Jean Paul Mugisha');

@@ -587,6 +587,11 @@ app.put('/api/admin/players/:id/scout-visibility', authenticateToken, requireAdm
 // --- SCOUT-FACING PLAYER SEARCH ---
 // Scouts get a minimised view (see lib/scouts.js): masked name, age instead of date of birth, no club contact until accepted.
 const SCOUT_PAGE_MAX = 20;
+const SCOUT_SORTS = {
+  name: [['name', 'ASC'], ['id', 'ASC']],
+  youngest: [['dateOfBirth', 'DESC'], ['name', 'ASC'], ['id', 'ASC']],
+  oldest: [['dateOfBirth', 'ASC'], ['name', 'ASC'], ['id', 'ASC']]
+};
 const SCOUT_PLAYER_ATTRIBUTES = ['id', 'name', 'dateOfBirth', 'position', 'profilePhoto', 'currentClubId', 'consentStatus', 'consentGraceUntil', 'scoutHidden'];
 const SCOUT_EVALUATION_ATTRIBUTES = ['id', 'createdAt', 'evalType', 'sprintSpeed', 'dribblingScore', 'overallRating', 'checklistData'];
 const SCOUT_CLUB_ATTRIBUTES = ['id', 'name', 'isVerified', 'standingStatus', 'trustScore', 'contactEmail', 'contactPhone'];
@@ -630,6 +635,9 @@ app.get('/api/players', authenticateToken, requireApprovedScout, limitScoutSearc
     // `under=15` keeps athletes younger than 15 today.
     const under = toInt(req.query.under, { min: 8, max: 25 });
     if (under) conditions.push({ dateOfBirth: { [Op.gt]: scouts.dobCutoffForUnder(under, now) } });
+    // `minAge=15` keeps athletes who are at least 15 today (born on or before the same date 15 years ago); with `under` it makes an age band.
+    const minAge = toInt(req.query.minAge, { min: 6, max: 25 });
+    if (minAge) conditions.push({ dateOfBirth: { [Op.lte]: scouts.dobCutoffForUnder(minAge, now) } });
     playerWhere[Op.and] = conditions;
 
     const evaluationInclude = { model: Evaluation, attributes: SCOUT_EVALUATION_ATTRIBUTES };
@@ -645,7 +653,7 @@ app.get('/api/players', authenticateToken, requireApprovedScout, limitScoutSearc
     const { count, rows } = await Player.findAndCountAll({
       where: playerWhere, limit, offset, distinct: true,
       attributes: SCOUT_PLAYER_ATTRIBUTES,
-      order: [['name', 'ASC'], ['id', 'ASC']], // a fixed order, so pages never repeat or skip athletes
+      order: SCOUT_SORTS[req.query.sort] || SCOUT_SORTS.name, // always ends with the id, so pages never repeat or skip athletes
       include: [
         evaluationInclude,
         { model: MatchStat, attributes: ['id', 'competition', 'opponent', 'matchResult', 'matchDate', 'goals', 'assists', 'minutesPlayed'] },

@@ -353,7 +353,8 @@ export default function AdminReviewScreen() {
       <View style={[styles.card, urgent && styles.cardUrgent]}>
         <View style={styles.reportHeader}>
           <View style={[styles.categoryPill, urgent && styles.categoryPillUrgent]}>
-            <Text style={[styles.categoryText, urgent && styles.categoryTextUrgent]}>{urgent ? '⚠ ' : ''}{item.category}</Text>
+            {urgent && <Ionicons name="warning" size={12} color="#B91C1C" accessibilityLabel="Urgent" />}
+            <Text style={[styles.categoryText, urgent && styles.categoryTextUrgent]}>{item.category}</Text>
           </View>
           <Text style={styles.dates}>{formatDate(item.createdAt)}</Text>
         </View>
@@ -543,7 +544,7 @@ const styles = StyleSheet.create({
   cancelText: { color: Colors.textSecondary, fontWeight: 'bold' },
   cardUrgent: { borderWidth: 1.5, borderColor: '#F87171' },
   reportHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 },
-  categoryPill: { backgroundColor: '#F3F4F6', paddingHorizontal: 10, paddingVertical: 4, borderRadius: 12 },
+  categoryPill: { flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: '#F3F4F6', paddingHorizontal: 10, paddingVertical: 4, borderRadius: 12 },
   categoryPillUrgent: { backgroundColor: '#FEE2E2' },
   categoryText: { fontSize: 11, fontWeight: 'bold', color: Colors.textSecondary },
   categoryTextUrgent: { color: '#B91C1C' },

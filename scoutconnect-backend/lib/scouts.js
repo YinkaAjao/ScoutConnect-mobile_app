@@ -65,6 +65,30 @@ function contactCooldownEnds(request, now = new Date()) {
   return ends > now ? ends : null;
 }
 
+// Plausible ranges, the same as the coach's evaluation form; anything outside is treated as not recorded.
+const BODY_RANGES = { heightCm: [100, 230], weightKg: [20, 150], sprint10m: [1, 4], bleepLevel: [1, 25] };
+const FEET = ['Left', 'Right', 'Both'];
+
+// Body size of a young person is withheld, like their surname, until the club accepts that scout's contact request.
+const REVEALED_ONLY = ['heightCm', 'weightKg'];
+
+/**
+ * The physical measurements a coach recorded with an evaluation (dominant foot, 10m sprint, bleep level, and height and
+ * weight once `revealed`), or null if there are none. Picked field by field, so the coach's notes and names stored
+ * beside them never leak.
+ */
+function scoutBody(checklistData, revealed = false) {
+  if (!checklistData || typeof checklistData !== 'object') return null;
+  const body = {};
+  for (const [key, [min, max]] of Object.entries(BODY_RANGES)) {
+    if (REVEALED_ONLY.includes(key) && !revealed) continue;
+    const value = Number(checklistData[key]);
+    if (Number.isFinite(value) && value >= min && value <= max) body[key] = value;
+  }
+  if (FEET.includes(checklistData.dominantFoot)) body.dominantFoot = checklistData.dominantFoot;
+  return Object.keys(body).length ? body : null;
+}
+
 const byCreatedAt = (a, b) => new Date(a.createdAt || 0) - new Date(b.createdAt || 0);
 
 /**
@@ -104,8 +128,10 @@ function toScoutAthlete(row, { now = new Date(), request = null, photoUrl = null
       sprintSpeed: e.sprintSpeed,
       dribblingScore: e.dribblingScore,
       overallRating: e.overallRating,
-      // Only the numeric averages; the coach's free-text notes and names stay private.
-      checklistData: e.checklistData?.averages ? { averages: e.checklistData.averages } : null
+      // Only the numeric averages and body measurements; the coach's free-text notes and names stay private.
+      checklistData: e.checklistData?.averages || scoutBody(e.checklistData, revealed)
+        ? { ...(e.checklistData?.averages ? { averages: e.checklistData.averages } : {}), ...(scoutBody(e.checklistData, revealed) ? { body: scoutBody(e.checklistData, revealed) } : {}) }
+        : null
     })),
     MatchStats: (player.MatchStats || []).map((m) => ({
       id: m.id, competition: m.competition, opponent: m.opponent, matchResult: m.matchResult,
@@ -164,5 +190,5 @@ async function pruneAccessLog(ScoutAccessLog, { now = new Date(), days = ACCESS_
 module.exports = {
   ORG_TYPES, CONSENT_GRACE_DAYS, CONTACT_COOLDOWN_DAYS, ACCESS_LOG_RETENTION_DAYS, contactCooldownEnds, pruneAccessLog,
   publicName, ageFromDob, dobCutoffForUnder, isVisibleToScouts, visibleToScoutsWhere,
-  toScoutAthlete, validateAccreditation, backfillConsentGrace
+  toScoutAthlete, scoutBody, validateAccreditation, backfillConsentGrace
 };

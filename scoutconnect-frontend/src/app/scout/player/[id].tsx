@@ -9,9 +9,11 @@ import { apiFetch } from '../../../lib/api';
 import FormSheet, { formStyles } from '../../../components/FormSheet';
 import { pillarScores } from '../../../lib/ratings';
 import { shareReportPdf } from '../../../lib/reportExport';
-import { PlayerProspect, Evaluation, MatchStat, Achievement, latestOverall, positionAgeLine } from '../../../lib/scoutPlayer';
+import { PlayerProspect, Evaluation, MatchStat, Achievement, latestOverall, positionAgeLine, matchTotals, latestBody, overallTrend, daysSinceLastEvaluation, outOfFive } from '../../../lib/scoutPlayer';
 import { Colors, CardSpec } from '../../../constants/designSystem';
 
+// One distinct colour per rating, used by the rings and the bars so they read together.
+const PILLAR_COLORS = { technical: '#0056B3', physical: '#F59E0B', coaching: '#8B5CF6' };
 const screenWidth = Dimensions.get('window').width - 60;
 // Must match REPORT_CATEGORIES in scoutconnect-backend/lib/reports.js
 const REPORT_CATEGORIES = ['Inaccurate stats', 'Wrong identity', 'Inappropriate photo', 'Safeguarding concern', 'Other'];
@@ -136,9 +138,18 @@ export default function ScoutPlayerScreen() {
     const evaluations = item.Evaluations ?? [];
     const latestEval: Evaluation | undefined = evaluations[evaluations.length - 1];
     const scores = latestEval ? pillarScores(latestEval) : { physical: null, technical: null, coaching: null };
-    const hasUnrated = scores.physical === null || scores.technical === null || scores.coaching === null;
-    const historyData = evaluations.map((ev) => ev.dribblingScore || 0);
     const overall = latestOverall(item);
+    const trend = overallTrend(item);
+    const totals = matchTotals(item.MatchStats);
+    const body = latestBody(item);
+    const lastEvalDays = daysSinceLastEvaluation(item);
+    const historyData = evaluations.map((ev) => ev.dribblingScore || 0);
+    const pillars = [
+      { key: 'Technical', value: scores.technical, color: PILLAR_COLORS.technical },
+      { key: 'Physical', value: scores.physical, color: PILLAR_COLORS.physical },
+      { key: 'Coaching', value: scores.coaching, color: PILLAR_COLORS.coaching },
+    ];
+    const hasUnrated = pillars.some((pillar) => pillar.value === null);
 
     return (
       <ScrollView contentContainerStyle={styles.scroll}>
@@ -157,27 +168,108 @@ export default function ScoutPlayerScreen() {
                 {item.Club?.isVerified && <Ionicons name="checkmark-circle" size={16} color={Colors.primary} accessibilityLabel="Verified club" />}
               </View>
               <Text style={styles.detail}>{positionAgeLine(item)}</Text>
+              {item.Club && <Text style={styles.detail} numberOfLines={1}>{item.Club.name}</Text>}
             </View>
             <View style={styles.ovrBadge}>
               <Text style={styles.ovrLabel}>OVR</Text>
               <Text style={styles.ovrValue}>{overall ?? 'N/A'}</Text>
+              {trend !== null && trend !== 0 && (
+                <View style={styles.trendRow}>
+                  <Ionicons name={trend > 0 ? 'caret-up' : 'caret-down'} size={11} color={trend > 0 ? '#047857' : '#B91C1C'} />
+                  <Text style={[styles.trendText, { color: trend > 0 ? '#047857' : '#B91C1C' }]}>{Math.abs(trend)}</Text>
+                </View>
+              )}
             </View>
           </View>
 
+          <View style={styles.glanceRow}>
+            <View style={styles.glanceBox}>
+              <Text style={styles.glanceValue}>{evaluations.length}</Text>
+              <Text style={styles.glanceLabel}>Evaluations</Text>
+            </View>
+            <View style={styles.glanceBox}>
+              <Text style={styles.glanceValue}>{lastEvalDays === null ? '--' : lastEvalDays === 0 ? 'Today' : `${lastEvalDays}d`}</Text>
+              <Text style={styles.glanceLabel}>Last evaluated</Text>
+            </View>
+            <View style={styles.glanceBox}>
+              <Text style={styles.glanceValue}>{totals.matches}</Text>
+              <Text style={styles.glanceLabel}>Matches</Text>
+            </View>
+            <View style={styles.glanceBox}>
+              <Text style={styles.glanceValue}>{totals.goals + totals.assists}</Text>
+              <Text style={styles.glanceLabel}>Goals + assists</Text>
+            </View>
+          </View>
+
+          <Text style={styles.sectionTitle}>Physical profile</Text>
+          <View style={styles.glanceRow}>
+            <View style={styles.glanceBox}>
+              {!body.heightCm && !item.identityRevealed
+                ? <Ionicons name="lock-closed" size={16} color={Colors.textSecondary} accessibilityLabel="Locked until the club accepts your request" />
+                : <Text style={styles.glanceValue}>{body.heightCm ? `${body.heightCm} cm` : '--'}</Text>}
+              <Text style={styles.glanceLabel}>Height</Text>
+            </View>
+            <View style={styles.glanceBox}>
+              {!body.weightKg && !item.identityRevealed
+                ? <Ionicons name="lock-closed" size={16} color={Colors.textSecondary} accessibilityLabel="Locked until the club accepts your request" />
+                : <Text style={styles.glanceValue}>{body.weightKg ? `${body.weightKg} kg` : '--'}</Text>}
+              <Text style={styles.glanceLabel}>Weight</Text>
+            </View>
+            <View style={styles.glanceBox}>
+              <Text style={styles.glanceValue}>{body.dominantFoot ?? '--'}</Text>
+              <Text style={styles.glanceLabel}>Dominant foot</Text>
+            </View>
+          </View>
+          {!item.identityRevealed && <Text style={styles.unratedNote}>Height and weight are shared once the club accepts your contact request.</Text>}
+
           {latestEval ? (
             <>
-              <Text style={styles.sectionTitle}>Performance Telemetry Rings</Text>
+              <Text style={styles.sectionTitle}>Coach ratings (latest evaluation, out of 5)</Text>
               <ProgressChart
-                data={{ labels: ['Physical', 'Technical', 'Coaching'], data: [scores.physical ?? 0, scores.technical ?? 0, scores.coaching ?? 0] }}
+                data={{
+                  labels: pillars.map((pillar) => pillar.key),
+                  data: pillars.map((pillar) => pillar.value ?? 0),
+                  colors: pillars.map((pillar) => pillar.color),
+                }}
                 width={screenWidth}
                 height={110}
                 strokeWidth={10}
                 radius={22}
                 chartConfig={chartConfig}
-                hideLegend={false}
+                withCustomBarColorFromData
+                hideLegend
                 style={styles.chart}
               />
-              {hasUnrated && <Text style={styles.unratedNote}>Empty rings were not rated by the coach.</Text>}
+              {pillars.map((pillar) => {
+                const rating = outOfFive(pillar.value);
+                return (
+                  <View key={pillar.key} style={styles.barRow}>
+                    <View style={[styles.barDot, { backgroundColor: pillar.color }]} />
+                    <Text style={styles.barLabel}>{pillar.key}</Text>
+                    <View style={styles.barTrack}>
+                      <View style={[styles.barFill, { width: `${Math.round((pillar.value ?? 0) * 100)}%`, backgroundColor: pillar.color }]} />
+                    </View>
+                    <Text style={styles.barValue}>{rating === null ? 'n/r' : rating.toFixed(1)}</Text>
+                  </View>
+                );
+              })}
+              {hasUnrated && <Text style={styles.unratedNote}>n/r = not rated by the coach.</Text>}
+
+              <Text style={styles.sectionTitle}>Test results</Text>
+              <View style={styles.glanceRow}>
+                <View style={styles.glanceBox}>
+                  <Text style={styles.glanceValue}>{latestEval.sprintSpeed ? `${latestEval.sprintSpeed}s` : '--'}</Text>
+                  <Text style={styles.glanceLabel}>30m sprint</Text>
+                </View>
+                <View style={styles.glanceBox}>
+                  <Text style={styles.glanceValue}>{latestEval.dribblingScore ? `${latestEval.dribblingScore}/5` : '--'}</Text>
+                  <Text style={styles.glanceLabel}>Ball control</Text>
+                </View>
+                <View style={styles.glanceBox}>
+                  <Text style={styles.glanceValue}>{latestEval.evalType || '--'}</Text>
+                  <Text style={styles.glanceLabel}>Evaluation type</Text>
+                </View>
+              </View>
             </>
           ) : (
             <Text style={styles.unratedNote}>No evaluation has been recorded yet.</Text>
@@ -185,7 +277,7 @@ export default function ScoutPlayerScreen() {
 
           {historyData.length > 1 && (
             <>
-              <Text style={styles.sectionTitle}>Technical Development Curve</Text>
+              <Text style={styles.sectionTitle}>Ball control over time</Text>
               <LineChart
                 data={{ labels: evaluations.map((_, index) => `E${index + 1}`), datasets: [{ data: historyData }] }}
                 width={screenWidth}
@@ -197,10 +289,28 @@ export default function ScoutPlayerScreen() {
             </>
           )}
 
-          {item.MatchStats && item.MatchStats.length > 0 && (
+          {totals.matches > 0 && (
             <View style={styles.portfolioSection}>
-              <Text style={styles.sectionTitle}>League Match Statistics</Text>
-              {item.MatchStats.map((stat: MatchStat) => (
+              <Text style={styles.sectionTitle}>Match record</Text>
+              <View style={styles.glanceRow}>
+                <View style={styles.glanceBox}>
+                  <Text style={styles.glanceValue}>{totals.goals}</Text>
+                  <Text style={styles.glanceLabel}>Goals</Text>
+                </View>
+                <View style={styles.glanceBox}>
+                  <Text style={styles.glanceValue}>{totals.assists}</Text>
+                  <Text style={styles.glanceLabel}>Assists</Text>
+                </View>
+                <View style={styles.glanceBox}>
+                  <Text style={styles.glanceValue}>{totals.minutes}</Text>
+                  <Text style={styles.glanceLabel}>Minutes</Text>
+                </View>
+                <View style={styles.glanceBox}>
+                  <Text style={styles.glanceValue}>{totals.goalsPer90 ?? '--'}</Text>
+                  <Text style={styles.glanceLabel}>Goals / 90</Text>
+                </View>
+              </View>
+              {item.MatchStats!.map((stat: MatchStat) => (
                 <View key={stat.id} style={{ marginVertical: 3 }}>
                   <Text style={styles.statLine}>
                     • {stat.competition} {stat.opponent ? `vs ${stat.opponent} (${stat.matchResult || 'W'})` : ''}
@@ -266,6 +376,7 @@ export default function ScoutPlayerScreen() {
               evaluations: item.Evaluations ?? [],
               matchStats: item.MatchStats ?? [],
               achievements: item.Achievements ?? [],
+              sharedBody: item.identityRevealed ? { heightCm: body.heightCm, weightKg: body.weightKg } : undefined,
             })}
             accessibilityRole="button"
             accessibilityLabel={`Download a PDF report for ${item.displayName}`}
@@ -401,6 +512,18 @@ const styles = StyleSheet.create({
   ovrBadge: { backgroundColor: Colors.secondaryLight, paddingHorizontal: 10, paddingVertical: 6, borderRadius: 8, alignItems: 'center', borderWidth: 1, borderColor: Colors.secondaryBorder },
   ovrLabel: { fontSize: 9, fontWeight: 'bold', color: Colors.secondary },
   ovrValue: { fontSize: 14, fontWeight: 'bold', color: Colors.secondary },
+  trendRow: { flexDirection: 'row', alignItems: 'center', gap: 2, marginTop: 1 },
+  trendText: { fontSize: 10, fontWeight: 'bold' },
+  glanceRow: { flexDirection: 'row', gap: 8, marginBottom: 6 },
+  glanceBox: { flex: 1, backgroundColor: '#F9FAFB', borderRadius: 8, borderWidth: 1, borderColor: Colors.border, paddingVertical: 8, paddingHorizontal: 4, alignItems: 'center' },
+  glanceValue: { fontSize: 15, fontWeight: 'bold', color: Colors.textPrimary },
+  glanceLabel: { fontSize: 10, color: Colors.textSecondary, marginTop: 2, textAlign: 'center' },
+  barRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginVertical: 4 },
+  barDot: { width: 10, height: 10, borderRadius: 5 },
+  barLabel: { width: 64, fontSize: 12, fontWeight: '600', color: Colors.textPrimary },
+  barTrack: { flex: 1, height: 8, borderRadius: 4, backgroundColor: '#E5E7EB', overflow: 'hidden' },
+  barFill: { height: 8, borderRadius: 4 },
+  barValue: { width: 32, textAlign: 'right', fontSize: 12, fontWeight: 'bold', color: Colors.textPrimary },
   sectionTitle: { fontSize: 13, fontWeight: '700', color: Colors.textSecondary, marginBottom: 8, marginTop: 10 },
   chart: { marginVertical: 4, borderRadius: 8, alignSelf: 'center' },
   portfolioSection: { marginTop: 12, padding: 10, backgroundColor: '#F9FAFB', borderRadius: 8, borderWidth: 1, borderColor: Colors.border },

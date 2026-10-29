@@ -88,10 +88,13 @@ export default function RequestsScreen() {
         </View>
 
         {item.club && (
-          <Text style={styles.club}>
-            {item.club.isVerified ? '✓ Verified club: ' : 'Club: '}
-            {item.club.name}
-          </Text>
+          <View style={styles.clubRow}>
+            {item.club.isVerified && <Ionicons name="checkmark-circle" size={14} color={Colors.primary} accessibilityLabel="Verified club" />}
+            <Text style={styles.club}>
+              {item.club.isVerified ? 'Verified club: ' : 'Club: '}
+              {item.club.name}
+            </Text>
+          </View>
         )}
         <Text style={styles.message}>“{item.message}”</Text>
         <Text style={styles.date}>Sent {new Date(item.createdAt).toLocaleDateString()}</Text>
@@ -108,12 +111,18 @@ export default function RequestsScreen() {
             <Text style={styles.contactTitle}>Club contact details</Text>
             {item.club.contactEmail ? (
               <TouchableOpacity onPress={() => Linking.openURL(`mailto:${item.club!.contactEmail}`)} accessibilityRole="link" accessibilityLabel={`Email ${item.club.name}`}>
-                <Text style={styles.contactLink}>✉ {item.club.contactEmail}</Text>
+                <View style={styles.contactRow}>
+                  <Ionicons name="mail-outline" size={16} color={Colors.secondary} />
+                  <Text style={styles.contactLink}>{item.club.contactEmail}</Text>
+                </View>
               </TouchableOpacity>
             ) : null}
             {item.club.contactPhone ? (
               <TouchableOpacity onPress={() => Linking.openURL(`tel:${item.club!.contactPhone}`)} accessibilityRole="link" accessibilityLabel={`Call ${item.club.name}`}>
-                <Text style={styles.contactLink}>☎ {item.club.contactPhone}</Text>
+                <View style={styles.contactRow}>
+                  <Ionicons name="call-outline" size={16} color={Colors.secondary} />
+                  <Text style={styles.contactLink}>{item.club.contactPhone}</Text>
+                </View>
               </TouchableOpacity>
             ) : null}
             {!item.club.contactEmail && !item.club.contactPhone ? <Text style={styles.noteText}>The club has not added contact details yet.</Text> : null}
@@ -178,7 +187,9 @@ const styles = StyleSheet.create({
   detail: { fontSize: 12, color: Colors.textSecondary, marginTop: 1 },
   pill: { paddingHorizontal: 10, paddingVertical: 4, borderRadius: 12, maxWidth: 130 },
   pillText: { fontSize: 11, fontWeight: 'bold', textAlign: 'center' },
-  club: { fontSize: 12, color: Colors.textSecondary, marginTop: 10 },
+  clubRow: { flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 10 },
+  club: { fontSize: 12, color: Colors.textSecondary },
+  contactRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   message: { fontSize: 13, color: Colors.textPrimary, fontStyle: 'italic', marginTop: 6, lineHeight: 19 },
   date: { fontSize: 11, color: '#9CA3AF', marginTop: 6 },
   noteBox: { backgroundColor: '#F9FAFB', borderRadius: 8, padding: 10, marginTop: 10 },

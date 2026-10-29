@@ -572,6 +572,18 @@ test('scout position filters are passed to the database as lists, not exact matc
   assert.equal(state.lastPlayerQuery.where.position, undefined);
 });
 
+test('scouts can filter by an age band and choose the sort order', async () => {
+  await call('GET', '/api/players?minAge=15&under=17', { as: scoutToken() });
+  const conditions = state.lastPlayerQuery.where[Op.and];
+  assert.ok(conditions.some((c) => c.dateOfBirth && c.dateOfBirth[Op.lte]));
+  assert.ok(conditions.some((c) => c.dateOfBirth && c.dateOfBirth[Op.gt]));
+
+  await call('GET', '/api/players?sort=youngest', { as: scoutToken() });
+  assert.deepEqual(state.lastPlayerQuery.order[0], ['dateOfBirth', 'DESC']);
+  await call('GET', '/api/players?sort=nonsense', { as: scoutToken() });
+  assert.deepEqual(state.lastPlayerQuery.order[0], ['name', 'ASC']);
+});
+
 test('an included list wins over an exclusion list, and the old exact "position" still works', async () => {
   await call('GET', '/api/players?positions=Striker&excludePositions=Goalkeeper', { as: scoutToken() });
   assert.deepEqual(state.lastPlayerQuery.where.position, { [Op.in]: ['Striker'] });
