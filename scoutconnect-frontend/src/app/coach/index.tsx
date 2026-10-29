@@ -7,6 +7,7 @@ import NetInfo from '@react-native-community/netinfo';
 import { apiFetch, ApiError } from '../../lib/api';
 import { uploadAthletePhoto } from '../../lib/storage';
 import { normaliseName, isValidDob, timeAgo, describeSkipReason } from '../../lib/text';
+import { RATING_SCALE, averageRated, overallFromAverages, parseMeasure } from '../../lib/ratings';
 import * as ImagePicker from 'expo-image-picker';
 import { Ionicons } from '@expo/vector-icons';
 import DateTimePicker from '@react-native-community/datetimepicker';
@@ -19,19 +20,44 @@ import {
 } from '../../../database';
 
 const RATING_OPTIONS = [
-  { value: 1, short: 'Needs Imp.', full: 'Needs Improvement' },
-  { value: 2, short: 'Average', full: 'Average' },
-  { value: 3, short: 'Good', full: 'Good' },
-  { value: 4, short: 'Excellent', full: 'Excellent' },
+  { value: 1, short: 'Poor', full: 'Poor' },
+  { value: 2, short: 'Fair', full: 'Below Average' },
+  { value: 3, short: 'Avg', full: 'Average' },
+  { value: 4, short: 'Good', full: 'Good' },
+  { value: 5, short: 'Elite', full: 'Excellent' },
 ];
 
+// The four-tier framework: tier 3 (match data) is logged from the Match Stats tab, so the checklist covers tiers 1, 2 and 4.
 const STAGES = [
   { id: 1, title: 'Identity & Info', icon: 'person-outline' },
   { id: 2, title: 'Technical', icon: 'football-outline' },
-  { id: 3, title: 'Tactical', icon: 'compass-outline' },
-  { id: 4, title: 'Physical & Psych', icon: 'fitness-outline' },
+  { id: 3, title: 'Physical', icon: 'fitness-outline' },
+  { id: 4, title: 'Coaching', icon: 'people-outline' },
   { id: 5, title: 'Summary', icon: 'clipboard-outline' },
 ];
+
+const FEET = ['Left', 'Right', 'Both'];
+
+const ATTR_LABELS: Record<string, string> = {
+  firstTouch: 'First Touch', shortPassing: 'Short Passing', longBall: 'Long Ball Distribution', tightDribbling: 'Dribbling in Tight Spaces', aerial: 'Aerial Ability',
+  weakFoot: 'Weak Foot Proficiency',
+  workRate: 'Work Rate', coachability: 'Coachability', tacticalDiscipline: 'Tactical Discipline', leadership: 'Leadership', attitude: 'Attitude',
+};
+
+const EMPTY_TECHNICAL = { firstTouch: 0, shortPassing: 0, longBall: 0, tightDribbling: 0, aerial: 0 };
+const EMPTY_PHYSICAL = { weakFoot: 0 };
+const EMPTY_COACHING = { workRate: 0, coachability: 0, tacticalDiscipline: 0, leadership: 0, attitude: 0 };
+
+// Optional measurements: [label, min, max] — blank is fine, a typo or impossible value is flagged.
+const MEASURES = {
+  sprint10m: ['10m sprint time', 1, 6],
+  sprint30m: ['30m sprint time', 2, 12],
+  bleepLevel: ['Bleep test level', 1, 25],
+  heightCm: ['Height (cm)', 100, 230],
+  weightKg: ['Weight (kg)', 20, 150],
+} as const;
+
+const unrated = (obj: Record<string, number>) => Object.keys(obj).filter((k) => obj[k] === 0).map((k) => ATTR_LABELS[k] ?? k);
 
 export default function CoachScreen() {
   const [activeTab, setActiveTab] = useState<'Evaluation' | 'MatchStat' | 'Achievement'>('Evaluation'); 
@@ -47,6 +73,9 @@ export default function CoachScreen() {
   // --- STAGED CHECKLIST STATE ---
   const [currentStage, setCurrentStage] = useState<number>(1);
   const [editingDraftId, setEditingDraftId] = useState<number | null>(null);
+  // Furthest stage visited, and whether a final submit was tried: incomplete stages are only flagged once passed or attempted.
+  const [reachedStage, setReachedStage] = useState<number>(1);
+  const [submitAttempted, setSubmitAttempted] = useState(false);
 
   // Stage 1: Identity & Context
   const [playerFirstName, setPlayerFirstName] = useState('');
@@ -69,14 +98,14 @@ export default function CoachScreen() {
   const [profilePhoto, setProfilePhoto] = useState<string | null>(null);
 
   // Stage 2, 3, 4: Attributes
-  const [technical, setTechnical] = useState<Record<string, number>>({ ballControl: 0, passingAccuracy: 0, dribbling: 0, shooting: 0, firstTouch: 0 });
-  const [tactical, setTactical] = useState<Record<string, number>>({ positioning: 0, decisionMaking: 0, gameVision: 0, offTheBallMovement: 0 });
-  const [physical, setPhysical] = useState<Record<string, number>>({ speed: 0, stamina: 0, strength: 0, agility: 0 });
-  const [sprintSpeed, setSprintSpeed] = useState('');
-  const [psychological, setPsychological] = useState<Record<string, number>>({ teamwork: 0, attitude: 0, workEthic: 0, coachability: 0 });
+  const [technical, setTechnical] = useState<Record<string, number>>({ ...EMPTY_TECHNICAL });
+  // Tier 1: weak foot is rated 1-5; the rest are optional measurements typed as text.
+  const [physical, setPhysical] = useState<Record<string, number>>({ ...EMPTY_PHYSICAL });
+  const [dominantFoot, setDominantFoot] = useState('');
+  const [measures, setMeasures] = useState<Record<keyof typeof MEASURES, string>>({ sprint10m: '', sprint30m: '', bleepLevel: '', heightCm: '', weightKg: '' });
+  const [coaching, setCoaching] = useState<Record<string, number>>({ ...EMPTY_COACHING });
 
-  // Stage 5: Overall Performance Rating & Open Notes
-  const [overallRating, setOverallRating] = useState<number>(0); 
+  // Stage 5: the overall rating is calculated; the coach only writes notes
   const [strengths, setStrengths] = useState('');
   const [areasForImprovement, setAreasForImprovement] = useState('');
   const [evalType] = useState('Checklist');
@@ -173,9 +202,42 @@ export default function CoachScreen() {
     setCachedQueue(evals);
   };
 
+  useEffect(() => {
+    setReachedStage((r) => Math.max(r, currentStage));
+  }, [currentStage]);
+
+  /** What is still missing, per stage id, using the same rules as final submission. */
+  const missingByStage = (): Record<number, string[]> => ({
+    1: [
+      ...(!playerFirstName.trim() ? ['Player first name'] : []),
+      ...(!playerLastName.trim() ? ['Player last name'] : []),
+      ...(!isValidDob(dateOfBirth) ? ['Player date of birth'] : []),
+      ...(!evaluatorFirstName.trim() ? ['Evaluator first name'] : []),
+      ...(!evaluatorLastName.trim() ? ['Evaluator last name'] : []),
+    ],
+    2: unrated(technical),
+    3: [
+      ...(!dominantFoot ? ['Dominant foot'] : []),
+      ...unrated(physical),
+      ...(Object.keys(MEASURES) as (keyof typeof MEASURES)[])
+        .filter((key) => Number.isNaN(parseMeasure(measures[key], MEASURES[key][1], MEASURES[key][2])))
+        .map((key) => `${MEASURES[key][0]} (enter ${MEASURES[key][1]}–${MEASURES[key][2]} or leave blank)`),
+    ],
+    4: unrated(coaching),
+    5: [],
+  });
+  const missing = missingByStage();
+  // Category averages on the 1-5 scale (null until something in that category is rated), and the calculated overall.
+  const averages = { technical: averageRated(technical), physical: averageRated(physical), psychological: averageRated(coaching) };
+  const overallAvg = overallFromAverages([averages.technical, averages.physical, averages.psychological]);
+  const isFlagged = (stageId: number) => missing[stageId].length > 0 && (submitAttempted || stageId < reachedStage);
+  const fieldBad = (cond: boolean, stageId = 1) => (cond && isFlagged(stageId) ? styles.inputError : null);
+
   const resetEvaluationForm = () => {
     setEditingDraftId(null);
     setCurrentStage(1);
+    setReachedStage(1);
+    setSubmitAttempted(false);
     setPlayerFirstName('');
     setPlayerLastName('');
     setDateOfBirth('');
@@ -183,12 +245,11 @@ export default function CoachScreen() {
     setMainPosition('Striker / Center Forward');
     setSubPosition('None');
     setProfilePhoto(null);
-    setTechnical({ ballControl: 0, passingAccuracy: 0, dribbling: 0, shooting: 0, firstTouch: 0 });
-    setTactical({ positioning: 0, decisionMaking: 0, gameVision: 0, offTheBallMovement: 0 });
-    setPhysical({ speed: 0, stamina: 0, strength: 0, agility: 0 });
-    setSprintSpeed('');
-    setPsychological({ teamwork: 0, attitude: 0, workEthic: 0, coachability: 0 });
-    setOverallRating(0);
+    setTechnical({ ...EMPTY_TECHNICAL });
+    setPhysical({ ...EMPTY_PHYSICAL });
+    setDominantFoot('');
+    setMeasures({ sprint10m: '', sprint30m: '', bleepLevel: '', heightCm: '', weightKg: '' });
+    setCoaching({ ...EMPTY_COACHING });
     setStrengths('');
     setAreasForImprovement('');
   };
@@ -196,6 +257,8 @@ export default function CoachScreen() {
   const loadDraftIntoForm = (draft: any) => {
     setEditingDraftId(draft.id);
     setCurrentStage(draft.currentStage || 1);
+    setReachedStage(draft.currentStage || 1);
+    setSubmitAttempted(false);
     setProfilePhoto(draft.profilePhoto || null);
     setDateOfBirth(draft.dateOfBirth || '');
     setLinkedAthleteId(draft.playerId || null);
@@ -210,12 +273,29 @@ export default function CoachScreen() {
         if (parsed.subPosition) setSubPosition(parsed.subPosition);
         setEvaluatorFirstName(parsed.evaluatorFirstName || '');
         setEvaluatorLastName(parsed.evaluatorLastName || '');
-        if (parsed.technical) setTechnical(parsed.technical);
-        if (parsed.tactical) setTactical(parsed.tactical);
-        if (parsed.physical) setPhysical(parsed.physical);
-        if (parsed.psychological) setPsychological(parsed.psychological);
-        if (parsed.sprintSpeed) setSprintSpeed(String(parsed.sprintSpeed));
-        if (parsed.overallRating) setOverallRating(parsed.overallRating);
+        if (parsed.ratingScale === RATING_SCALE) {
+          setTechnical({ ...EMPTY_TECHNICAL, ...parsed.technical });
+          setPhysical({ ...EMPTY_PHYSICAL, ...parsed.physical });
+          setCoaching({ ...EMPTY_COACHING, ...parsed.coaching });
+          setDominantFoot(parsed.dominantFoot || '');
+          setMeasures({
+            sprint10m: parsed.sprint10m != null ? String(parsed.sprint10m) : '',
+            sprint30m: parsed.sprint30m != null ? String(parsed.sprint30m) : '',
+            bleepLevel: parsed.bleepLevel != null ? String(parsed.bleepLevel) : '',
+            heightCm: parsed.heightCm != null ? String(parsed.heightCm) : '',
+            weightKg: parsed.weightKg != null ? String(parsed.weightKg) : '',
+          });
+        } else {
+          // A draft from the old 1-4 form: its attributes no longer exist, so only the identity details carry over.
+          setTechnical({ ...EMPTY_TECHNICAL });
+          setPhysical({ ...EMPTY_PHYSICAL });
+          setCoaching({ ...EMPTY_COACHING });
+          setDominantFoot('');
+          setMeasures({ sprint10m: '', sprint30m: '', bleepLevel: '', heightCm: '', weightKg: '' });
+          setCurrentStage(1);
+          setReachedStage(1);
+          Alert.alert('Draft from the old form', 'The evaluation now uses a 1–5 scale and new attributes, so the ratings in this draft need to be entered again. Names and notes were kept.');
+        }
         setStrengths(parsed.strengths || '');
         setAreasForImprovement(parsed.areasForImprovement || '');
       } catch (e) {
@@ -299,6 +379,8 @@ export default function CoachScreen() {
       await markMatchStatsAsSynced(result.syncedIds?.matchStats ?? []);
       await markAchievementsAsSynced(result.syncedIds?.achievements ?? []);
       await checkUnsyncedRecords();
+      // Newly synced athletes must appear in the roster picker straight away.
+      await fetchCoachClubAndRoster();
 
       const skipped: { type: 'records' | 'matchStats' | 'achievements'; id: number; reason: string }[] = result.skipped ?? [];
       const problems = skipped.length + photoFailures;
@@ -373,41 +455,27 @@ export default function CoachScreen() {
     }
 
     if (isDraftFlag === 0) {
-      if (!playerFirstName.trim() || !playerLastName.trim()) {
-        Alert.alert('Validation Error', 'Both Player First Name and Last Name are required for final submission.');
-        setCurrentStage(1);
-        return;
-      }
-      if (!isValidDob(dateOfBirth)) {
-        Alert.alert('Date of Birth Required', "Please set the player's date of birth in Stage 1 before final submission.");
-        setCurrentStage(1);
-        return;
-      }
-      if (!evaluatorFirstName.trim() || !evaluatorLastName.trim()) {
-        Alert.alert('Validation Error', 'Evaluator First Name and Last Name are required.');
-        setCurrentStage(1);
-        return;
-      }
-      const unratedTech = Object.values(technical).some(v => v === 0);
-      const unratedTac = Object.values(tactical).some(v => v === 0);
-      const unratedPhys = Object.values(physical).some(v => v === 0);
-      const unratedPsych = Object.values(psychological).some(v => v === 0);
-
-      if (unratedTech || unratedTac || unratedPhys || unratedPsych || overallRating === 0) {
-        Alert.alert('Incomplete Ratings', 'Please ensure all technical, tactical, physical, psychological attributes and overall rating have been explicitly reviewed before final submission.');
+      const incomplete = STAGES.filter((s) => missing[s.id].length > 0);
+      if (incomplete.length > 0) {
+        setSubmitAttempted(true);
+        setCurrentStage(incomplete[0].id);
+        Alert.alert(
+          'Evaluation incomplete',
+          incomplete.map((s) => `Stage ${s.id} (${s.title}):\n${missing[s.id].map((m) => `  • ${m}`).join('\n')}`).join('\n\n') +
+            '\n\nIncomplete stages are marked in red.'
+        );
         return;
       }
     }
 
-    const sanitizeVal = (val: number) => (val === 0 ? 3 : val);
-    const techAvg4 = Object.values(technical).reduce((a, b) => a + sanitizeVal(b), 0) / Object.values(technical).length;
-    const tacAvg4 = Object.values(tactical).reduce((a, b) => a + sanitizeVal(b), 0) / Object.values(tactical).length;
-    const physAvg4 = Object.values(physical).reduce((a, b) => a + sanitizeVal(b), 0) / Object.values(physical).length;
-    const psychAvg4 = Object.values(psychological).reduce((a, b) => a + sanitizeVal(b), 0) / Object.values(psychological).length;
-
-    const computedDribblingScore = parseFloat(((techAvg4 / 4) * 5).toFixed(1));
-    const activeSpeedRating = physical.speed === 0 ? 3 : physical.speed;
-    const computedSprintSpeed = sprintSpeed ? parseFloat(sprintSpeed) : parseFloat((4.8 - (activeSpeedRating * 0.25)).toFixed(2));
+    // Only what the coach really entered is stored: unrated categories stay null (a draft) and a missing sprint time is not invented.
+    const measureValue = (key: keyof typeof MEASURES) => {
+      const value = parseMeasure(measures[key], MEASURES[key][1], MEASURES[key][2]);
+      return value !== null && !Number.isNaN(value) ? value : null;
+    };
+    const sprint30m = measureValue('sprint30m');
+    const computedDribblingScore = averages.technical === null ? null : parseFloat(averages.technical.toFixed(1));
+    const overallRating = overallAvg === null ? null : Math.round(overallAvg);
 
     const evaluatorFullName = `${evaluatorFirstName.trim()} ${evaluatorLastName.trim()}`.trim();
     const evaluationDate = new Date().toISOString().split('T')[0]; // Auto-set to Today
@@ -422,23 +490,24 @@ export default function CoachScreen() {
       evaluatorLastName: evaluatorLastName.trim(),
       evaluatorName: evaluatorFullName,
       evaluationDate,
+      ratingScale: RATING_SCALE,
       technical,
-      tactical,
       physical,
-      psychological,
-      averages: {
-        technical: parseFloat(techAvg4.toFixed(2)),
-        tactical: parseFloat(tacAvg4.toFixed(2)),
-        physical: parseFloat(physAvg4.toFixed(2)),
-        psychological: parseFloat(psychAvg4.toFixed(2)),
-      },
-      sprintSpeed: computedSprintSpeed,
-      overallRating: overallRating === 0 ? 3 : overallRating,
+      coaching,
+      dominantFoot,
+      sprint10m: measureValue('sprint10m'),
+      sprint30m,
+      bleepLevel: measureValue('bleepLevel'),
+      heightCm: measureValue('heightCm'),
+      weightKg: measureValue('weightKg'),
+      // `psychological` holds the coaching-indices average, and `tactical` stays null: the key names match older evaluations.
+      averages: { ...averages, tactical: null, overall: overallAvg, scale: RATING_SCALE },
+      overallRating,
       strengths: strengths.trim(),
       areasForImprovement: areasForImprovement.trim(),
     };
 
-    const summaryWorkRate = `${mainPosition} (Sub: ${subPosition}) | Overall: ${overallRating || 3}/5`;
+    const summaryWorkRate = `${mainPosition} (Sub: ${subPosition}) | Overall: ${overallAvg ?? '–'}/${RATING_SCALE}`;
 
     // Link to an existing roster athlete (same name + date of birth) so a re-evaluation never creates a duplicate.
     const rosterMatch = linkedAthleteId
@@ -450,7 +519,7 @@ export default function CoachScreen() {
       fullName,
       dateOfBirth,
       profilePhoto,
-      computedSprintSpeed,
+      sprint30m,
       computedDribblingScore,
       summaryWorkRate,
       evalType,
@@ -515,14 +584,15 @@ export default function CoachScreen() {
     setStateFn: React.Dispatch<React.SetStateAction<Record<string, number>>>
   ) => {
     const isUnreviewed = stateObj[fieldKey] === 0;
+    const flagged = isUnreviewed && isFlagged(currentStage);
     return (
-      <View key={fieldKey} style={[styles.matrixRow, isUnreviewed && styles.matrixRowUnreviewed]}>
+      <View key={fieldKey} style={[styles.matrixRow, isUnreviewed && styles.matrixRowUnreviewed, flagged && styles.matrixRowMissing]}>
         <View style={styles.matrixHeaderRow}>
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
             <Text style={styles.matrixAttrLabel}>{label}</Text>
             {isUnreviewed && (
-              <View style={styles.unreviewedPill}>
-                <Text style={styles.unreviewedPillText}>DEFAULT / UNREVIEWED</Text>
+              <View style={[styles.unreviewedPill, flagged && styles.missingPill]}>
+                <Text style={[styles.unreviewedPillText, flagged && styles.missingPillText]}>{flagged ? 'REQUIRED' : 'DEFAULT / UNREVIEWED'}</Text>
               </View>
             )}
           </View>
@@ -646,32 +716,53 @@ export default function CoachScreen() {
             <View style={styles.stepperContainer}>
               {STAGES.map((stage) => {
                 const isCurrent = currentStage === stage.id;
-                const isCompleted = currentStage > stage.id;
+                const flagged = isFlagged(stage.id);
+                const isCompleted = !flagged && stage.id < reachedStage && missing[stage.id].length === 0;
                 return (
                   <TouchableOpacity
                     key={stage.id}
                     style={[
                       styles.stepPill,
                       isCurrent && styles.stepPillCurrent,
-                      isCompleted && styles.stepPillCompleted
+                      isCompleted && !isCurrent && styles.stepPillCompleted,
+                      flagged && styles.stepPillMissing
                     ]}
                     onPress={() => setCurrentStage(stage.id)}
                     accessibilityRole="button"
-                    accessibilityLabel={`Stage ${stage.id}: ${stage.title}`}
+                    accessibilityLabel={`Stage ${stage.id}: ${stage.title}${flagged ? `, incomplete: ${missing[stage.id].length} missing` : ''}`}
                     accessibilityState={{ selected: isCurrent }}
                   >
                     <Ionicons
-                      name={isCompleted ? 'checkmark-circle' : (stage.icon as any)}
+                      name={flagged ? 'alert-circle' : isCompleted ? 'checkmark-circle' : (stage.icon as any)}
                       size={14}
-                      color={isCurrent || isCompleted ? '#FFF' : Colors.textSecondary}
+                      color={flagged ? Colors.danger : isCurrent || isCompleted ? '#FFF' : Colors.textSecondary}
                     />
-                    <Text style={[styles.stepPillText, (isCurrent || isCompleted) && { color: '#FFF' }]}>
+                    <Text style={[styles.stepPillText, (isCurrent || isCompleted) && !flagged && { color: '#FFF' }, flagged && { color: Colors.danger }]}>
                       {stage.id}. {stage.title}
                     </Text>
                   </TouchableOpacity>
                 );
               })}
             </View>
+
+            {isFlagged(currentStage) && (
+              <View style={styles.missingBanner} accessibilityRole="alert">
+                <Ionicons name="alert-circle" size={16} color={Colors.danger} />
+                <Text style={styles.missingBannerText}>Still needed on this stage: {missing[currentStage].join(', ')}</Text>
+              </View>
+            )}
+            {currentStage === 5 && STAGES.some((s) => s.id < 5 && isFlagged(s.id)) && (
+              <View style={styles.missingBanner}>
+                <Ionicons name="alert-circle" size={16} color={Colors.danger} />
+                <View style={{ flex: 1 }}>
+                  {STAGES.filter((s) => s.id < 5 && isFlagged(s.id)).map((s) => (
+                    <TouchableOpacity key={s.id} onPress={() => setCurrentStage(s.id)} accessibilityRole="button">
+                      <Text style={styles.missingBannerText}>Stage {s.id} ({s.title}): {missing[s.id].length} missing — tap to fix</Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              </View>
+            )}
 
             {/* STAGE 1 */}
             {currentStage === 1 && (
@@ -715,10 +806,10 @@ export default function CoachScreen() {
                 <Text style={styles.label}>Player Full Name *</Text>
                 <View style={styles.row}>
                   <View style={styles.halfCol}>
-                    <TextInput style={styles.input} placeholder="First Name" placeholderTextColor="#9CA3AF" value={playerFirstName} onChangeText={setPlayerFirstName} editable={!linkedAthleteId} />
+                    <TextInput style={[styles.input, fieldBad(!playerFirstName.trim())]} placeholder="First Name" placeholderTextColor="#9CA3AF" value={playerFirstName} onChangeText={setPlayerFirstName} editable={!linkedAthleteId} />
                   </View>
                   <View style={styles.halfCol}>
-                    <TextInput style={styles.input} placeholder="Last Name" placeholderTextColor="#9CA3AF" value={playerLastName} onChangeText={setPlayerLastName} editable={!linkedAthleteId} />
+                    <TextInput style={[styles.input, fieldBad(!playerLastName.trim())]} placeholder="Last Name" placeholderTextColor="#9CA3AF" value={playerLastName} onChangeText={setPlayerLastName} editable={!linkedAthleteId} />
                   </View>
                 </View>
 
@@ -747,7 +838,7 @@ export default function CoachScreen() {
                   </View>
                   <View style={styles.halfCol}>
                     <Text style={styles.label}>Player DOB *</Text>
-                    <TouchableOpacity style={styles.dropdownSelector} onPress={() => setShowDobPicker(true)} disabled={!!linkedAthleteId} accessibilityLabel="Select player date of birth">
+                    <TouchableOpacity style={[styles.dropdownSelector, fieldBad(!isValidDob(dateOfBirth))]} onPress={() => setShowDobPicker(true)} disabled={!!linkedAthleteId} accessibilityLabel="Select player date of birth">
                       <Text style={[styles.dropdownSelectorText, !dateOfBirth && { color: '#9CA3AF' }]}>{dateOfBirth || 'Select date'}</Text>
                       <Ionicons name="calendar-outline" size={14} color={Colors.textSecondary} />
                     </TouchableOpacity>
@@ -768,10 +859,10 @@ export default function CoachScreen() {
                 <Text style={styles.label}>Evaluator Name *</Text>
                 <View style={styles.row}>
                   <View style={styles.halfCol}>
-                    <TextInput style={styles.input} placeholder="First Name" placeholderTextColor="#9CA3AF" value={evaluatorFirstName} onChangeText={setEvaluatorFirstName} />
+                    <TextInput style={[styles.input, fieldBad(!evaluatorFirstName.trim())]} placeholder="First Name" placeholderTextColor="#9CA3AF" value={evaluatorFirstName} onChangeText={setEvaluatorFirstName} />
                   </View>
                   <View style={styles.halfCol}>
-                    <TextInput style={styles.input} placeholder="Last Name" placeholderTextColor="#9CA3AF" value={evaluatorLastName} onChangeText={setEvaluatorLastName} />
+                    <TextInput style={[styles.input, fieldBad(!evaluatorLastName.trim())]} placeholder="Last Name" placeholderTextColor="#9CA3AF" value={evaluatorLastName} onChangeText={setEvaluatorLastName} />
                   </View>
                 </View>
                 
@@ -782,78 +873,103 @@ export default function CoachScreen() {
               </View>
             )}
 
-            {/* STAGE 2 */}
+            {/* STAGE 2 — Tier 2: Technical Proficiency */}
             {currentStage === 2 && (
               <View>
-                <Text style={styles.sectionTitle}>Stage 2: Technical Skills Assessment *</Text>
-                <Text style={styles.sectionSub}>Unreviewed attributes are clearly flagged so you know what has been evaluated.</Text>
-                {renderRatingRow('Ball Control', 'ballControl', technical, setTechnical)}
-                {renderRatingRow('Passing Accuracy', 'passingAccuracy', technical, setTechnical)}
-                {renderRatingRow('Dribbling', 'dribbling', technical, setTechnical)}
-                {renderRatingRow('Shooting', 'shooting', technical, setTechnical)}
+                <Text style={styles.sectionTitle}>Stage 2: Technical Proficiency *</Text>
+                <Text style={styles.sectionSub}>Rate each skill from 1 (Poor) to 5 (Excellent). Unreviewed skills are flagged.</Text>
                 {renderRatingRow('First Touch', 'firstTouch', technical, setTechnical)}
+                {renderRatingRow('Short Passing Accuracy', 'shortPassing', technical, setTechnical)}
+                {renderRatingRow('Long Ball Distribution', 'longBall', technical, setTechnical)}
+                {renderRatingRow('Dribbling in Tight Spaces', 'tightDribbling', technical, setTechnical)}
+                {renderRatingRow('Aerial Ability', 'aerial', technical, setTechnical)}
               </View>
             )}
 
-            {/* STAGE 3 */}
+            {/* STAGE 3 — Tier 1: Physical Biometrics */}
             {currentStage === 3 && (
               <View>
-                <Text style={styles.sectionTitle}>Stage 3: Tactical Awareness Assessment *</Text>
-                <Text style={styles.sectionSub}>Assess spatial awareness, vision, and decision-making on the pitch.</Text>
-                {renderRatingRow('Positioning', 'positioning', tactical, setTactical)}
-                {renderRatingRow('Decision Making', 'decisionMaking', tactical, setTactical)}
-                {renderRatingRow('Game Vision', 'gameVision', tactical, setTactical)}
-                {renderRatingRow('Off-the-ball Movement', 'offTheBallMovement', tactical, setTactical)}
+                <Text style={styles.sectionTitle}>Stage 3: Physical Biometrics *</Text>
+                <Text style={styles.sectionSub}>Dominant foot and weak foot are required. Timings and body measurements are optional: fill in what you measured.</Text>
+
+                <Text style={styles.label}>Dominant Foot *</Text>
+                <View style={[styles.matrixOptionsRow, { marginBottom: 8 }, fieldBad(!dominantFoot, 3) && styles.footRowMissing]}>
+                  {FEET.map((foot) => {
+                    const active = dominantFoot === foot;
+                    return (
+                      <TouchableOpacity
+                        key={foot}
+                        style={[styles.matrixOptionBtn, active && styles.matrixOptionBtnActive]}
+                        onPress={() => setDominantFoot(foot)}
+                        accessibilityRole="button"
+                        accessibilityLabel={`Dominant foot: ${foot}`}
+                        accessibilityState={{ selected: active }}
+                      >
+                        <Text style={[styles.matrixOptionText, active && styles.matrixOptionTextActive]}>{foot}</Text>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </View>
+
+                {renderRatingRow('Weak Foot Proficiency', 'weakFoot', physical, setPhysical)}
+
+                <View style={styles.row}>
+                  <View style={styles.halfCol}>
+                    <Text style={styles.label}>10m Sprint (s)</Text>
+                    <TextInput style={[styles.input, fieldBad(Number.isNaN(parseMeasure(measures.sprint10m, 1, 6)), 3)]} placeholder="e.g. 1.80" placeholderTextColor="#9CA3AF" keyboardType="decimal-pad" value={measures.sprint10m} onChangeText={(t) => setMeasures((m) => ({ ...m, sprint10m: t }))} />
+                  </View>
+                  <View style={styles.halfCol}>
+                    <Text style={styles.label}>30m Sprint (s)</Text>
+                    <TextInput style={[styles.input, fieldBad(Number.isNaN(parseMeasure(measures.sprint30m, 2, 12)), 3)]} placeholder="e.g. 4.20" placeholderTextColor="#9CA3AF" keyboardType="decimal-pad" value={measures.sprint30m} onChangeText={(t) => setMeasures((m) => ({ ...m, sprint30m: t }))} />
+                  </View>
+                </View>
+
+                <Text style={styles.label}>Bleep Test Level</Text>
+                <TextInput style={[styles.input, fieldBad(Number.isNaN(parseMeasure(measures.bleepLevel, 1, 25)), 3)]} placeholder="e.g. 11.5" placeholderTextColor="#9CA3AF" keyboardType="decimal-pad" value={measures.bleepLevel} onChangeText={(t) => setMeasures((m) => ({ ...m, bleepLevel: t }))} />
+
+                <View style={styles.row}>
+                  <View style={styles.halfCol}>
+                    <Text style={styles.label}>Height (cm)</Text>
+                    <TextInput style={[styles.input, fieldBad(Number.isNaN(parseMeasure(measures.heightCm, 100, 230)), 3)]} placeholder="e.g. 178" placeholderTextColor="#9CA3AF" keyboardType="decimal-pad" value={measures.heightCm} onChangeText={(t) => setMeasures((m) => ({ ...m, heightCm: t }))} />
+                  </View>
+                  <View style={styles.halfCol}>
+                    <Text style={styles.label}>Weight (kg)</Text>
+                    <TextInput style={[styles.input, fieldBad(Number.isNaN(parseMeasure(measures.weightKg, 20, 150)), 3)]} placeholder="e.g. 70" placeholderTextColor="#9CA3AF" keyboardType="decimal-pad" value={measures.weightKg} onChangeText={(t) => setMeasures((m) => ({ ...m, weightKg: t }))} />
+                  </View>
+                </View>
               </View>
             )}
 
-            {/* STAGE 4 */}
+            {/* STAGE 4 — Tier 4: Subjective Coaching Indices */}
             {currentStage === 4 && (
               <View>
-                <Text style={styles.sectionTitle}>Stage 4: Physical Attributes *</Text>
-                <Text style={styles.sectionSub}>Assess athletic output and optional 30m combine sprint speed.</Text>
-                {renderRatingRow('Speed', 'speed', physical, setPhysical)}
-                {renderRatingRow('Stamina', 'stamina', physical, setPhysical)}
-                {renderRatingRow('Strength', 'strength', physical, setPhysical)}
-                {renderRatingRow('Agility', 'agility', physical, setPhysical)}
-
-                <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginTop: 4 }}>
-                  <Text style={styles.label}>Optional: 30m Sprint Stopwatch (seconds)</Text>
-                  <Text style={{ fontSize: 11, color: Colors.textSecondary, marginTop: 10 }}>Goal: &lt; 4.20s</Text>
-                </View>
-                <TextInput style={styles.input} placeholder="e.g. 3.85 (optional)" placeholderTextColor="#9CA3AF" keyboardType="numeric" value={sprintSpeed} onChangeText={setSprintSpeed} />
-
-                <View style={{ height: 1, backgroundColor: Colors.border, marginVertical: 12 }} />
-
-                <Text style={styles.sectionTitle}>Psychological Attributes *</Text>
-                <Text style={styles.sectionSub}>Assess mentality, work ethic, and reception to coaching.</Text>
-                {renderRatingRow('Teamwork', 'teamwork', psychological, setPsychological)}
-                {renderRatingRow('Attitude', 'attitude', psychological, setPsychological)}
-                {renderRatingRow('Work Ethic', 'workEthic', psychological, setPsychological)}
-                {renderRatingRow('Coachability', 'coachability', psychological, setPsychological)}
+                <Text style={styles.sectionTitle}>Stage 4: Coaching Indices *</Text>
+                <Text style={styles.sectionSub}>Your judgement of the player's mentality and conduct, from 1 (Poor) to 5 (Excellent).</Text>
+                {renderRatingRow('Work Rate', 'workRate', coaching, setCoaching)}
+                {renderRatingRow('Coachability', 'coachability', coaching, setCoaching)}
+                {renderRatingRow('Tactical Discipline', 'tacticalDiscipline', coaching, setCoaching)}
+                {renderRatingRow('Leadership', 'leadership', coaching, setCoaching)}
+                {renderRatingRow('Attitude', 'attitude', coaching, setCoaching)}
               </View>
             )}
 
             {/* STAGE 5 */}
             {currentStage === 5 && (
               <View>
-                <Text style={styles.sectionTitle}>Stage 5: Overall Rating & Review *</Text>
-                <Text style={styles.sectionSub}>Provide final summary notes and submit to the sync queue.</Text>
+                <Text style={styles.sectionTitle}>Stage 5: Summary & Review</Text>
+                <Text style={styles.sectionSub}>The overall rating is calculated from your category ratings. Add notes, then submit to the sync queue.</Text>
 
-                <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginTop: 5 }}>
-                  <Text style={styles.label}>Overall Performance Rating (1-5) *</Text>
-                  <Text style={{ fontSize: 12, color: Colors.primary, fontWeight: 'bold' }}>{overallRating === 0 ? 'Not Rated Yet' : `${overallRating} / 5 • Verified`}</Text>
-                </View>
-                <View style={styles.starRow}>
-                  {[1, 2, 3, 4, 5].map(star => (
-                    <TouchableOpacity key={star} onPress={() => setOverallRating(star)}>
-                      <Ionicons 
-                        name={overallRating >= star ? "star" : "star-outline"} 
-                        size={28} 
-                        color={overallRating >= star ? '#F59E0B' : '#D1D5DB'} 
-                      />
-                    </TouchableOpacity>
+                <View style={styles.summaryRow}>
+                  {([['Technical', averages.technical], ['Physical', averages.physical], ['Coaching', averages.psychological]] as const).map(([name, value]) => (
+                    <View key={name} style={styles.summaryPill}>
+                      <Text style={styles.summaryPillLabel}>{name.toUpperCase()}</Text>
+                      <Text style={styles.summaryPillValue}>{value ?? '–'}</Text>
+                    </View>
                   ))}
+                </View>
+                <View style={styles.overallBox}>
+                  <Text style={styles.overallLabel}>Overall rating (calculated)</Text>
+                  <Text style={styles.overallValue}>{overallAvg === null ? 'Not rated yet' : `${overallAvg.toFixed(1)} / ${RATING_SCALE}`}</Text>
                 </View>
 
                 <Text style={styles.label}>Strengths (What did the player do well?)</Text>
@@ -1162,6 +1278,21 @@ const styles = StyleSheet.create({
   stepPill: { flexDirection: 'row', alignItems: 'center', gap: 4, paddingVertical: 6, paddingHorizontal: 10, borderRadius: 16, backgroundColor: '#F3F4F6' },
   stepPillCurrent: { backgroundColor: Colors.primary },
   stepPillCompleted: { backgroundColor: Colors.secondary },
+  stepPillMissing: { backgroundColor: '#FEF2F2', borderWidth: 1, borderColor: Colors.danger },
+  inputError: { borderColor: Colors.danger, backgroundColor: '#FEF2F2' },
+  matrixRowMissing: { borderColor: Colors.danger, backgroundColor: '#FEF2F2' },
+  missingPill: { backgroundColor: '#FEE2E2' },
+  missingPillText: { color: Colors.danger },
+  footRowMissing: { borderWidth: 1, borderColor: Colors.danger, borderRadius: 8, backgroundColor: '#FEF2F2', padding: 4 },
+  summaryRow: { flexDirection: 'row', gap: 8, marginTop: 6 },
+  summaryPill: { flex: 1, alignItems: 'center', backgroundColor: '#F9FAFB', borderWidth: 1, borderColor: Colors.border, borderRadius: 8, paddingVertical: 8 },
+  summaryPillLabel: { fontSize: 10, fontWeight: 'bold', color: Colors.textSecondary },
+  summaryPillValue: { fontSize: 18, fontWeight: 'bold', color: Colors.textPrimary, marginTop: 2 },
+  overallBox: { alignItems: 'center', marginTop: 10, marginBottom: 6, paddingVertical: 10, borderRadius: 8, backgroundColor: '#ECFDF5' },
+  overallLabel: { fontSize: 12, fontWeight: '600', color: Colors.textSecondary },
+  overallValue: { fontSize: 24, fontWeight: 'bold', color: Colors.primary, marginTop: 2 },
+  missingBanner: { flexDirection: 'row', alignItems: 'flex-start', gap: 8, backgroundColor: '#FEF2F2', borderWidth: 1, borderColor: Colors.danger, borderRadius: 8, padding: 10, marginBottom: 12 },
+  missingBannerText: { flex: 1, fontSize: 12, fontWeight: '600', color: Colors.danger },
   stepPillText: { fontSize: 11, fontWeight: 'bold', color: Colors.textSecondary },
   sectionTitle: { fontSize: 17, fontWeight: 'bold', color: Colors.textPrimary },
   sectionSub: { fontSize: 12, color: Colors.textSecondary, marginBottom: 14, marginTop: 2 },

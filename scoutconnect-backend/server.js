@@ -686,8 +686,12 @@ async function scoutAthleteDetail(req, res) {
 
     const requests = await latestRequestsFor(req.user.id, [player.id]);
     const photoUrls = await signedPhotos(req, [player]);
+    const shortlisted = await Shortlist.findOne({ where: { scoutId: req.user.id, playerId: player.id } });
     await logScoutAccess(req.user.id, 'player-detail', [player.id]);
-    res.status(200).json(scouts.toScoutAthlete(player, { now, request: requests.get(player.id), photoUrl: photoUrls.get(player.profilePhoto) }));
+    res.status(200).json({
+      ...scouts.toScoutAthlete(player, { now, request: requests.get(player.id), photoUrl: photoUrls.get(player.profilePhoto) }),
+      shortlistId: shortlisted?.id || null
+    });
   } catch (error) {
     res.status(500).json({ error: 'Failed to fetch player details.' });
   }
@@ -793,6 +797,18 @@ app.get('/api/shortlist', authenticateToken, requireApprovedScout, async (req, r
     }));
   } catch (error) {
     res.status(500).json({ error: 'Failed to fetch shortlist.' });
+  }
+});
+
+// Edit the private note on a shortlist entry.
+app.patch('/api/shortlist/:id', authenticateToken, requireRole('Scout'), async (req, res) => {
+  const notes = String(req.body.notes ?? '').trim().slice(0, 500);
+  try {
+    const [updated] = await Shortlist.update({ notes: notes || null }, { where: { id: req.params.id, scoutId: req.user.id } });
+    if (updated) res.status(200).json({ id: req.params.id, notes: notes || null });
+    else res.status(404).json({ error: 'Shortlist entry not found.' });
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to update the note.' });
   }
 });
 

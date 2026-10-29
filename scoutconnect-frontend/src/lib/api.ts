@@ -16,7 +16,7 @@ export class ApiError extends Error {
 }
 
 interface ApiOptions {
-  method?: 'GET' | 'POST' | 'PUT' | 'DELETE';
+  method?: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
   body?: unknown;
   /** Attach the Supabase access token (default true). */
   auth?: boolean;

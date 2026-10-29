@@ -106,6 +106,11 @@ const fakeModels = () => {
       findOne: async ({ where }) => state.shortlistRows.find((e) => e.scoutId === where.scoutId && e.playerId === where.playerId) || null,
       create: async (values) => { const entry = { id: 'sl-' + (state.shortlistRows.length + 1), ...values }; state.shortlistRows.push(entry); return entry; },
       destroy: async () => 1,
+      update: async (values, { where }) => {
+        const row = state.shortlistRows.find((e) => e.id === where.id && e.scoutId === where.scoutId);
+        if (row) Object.assign(row, values);
+        return [row ? 1 : 0];
+      },
     },
     ScoutProfile: {
       findOne: async ({ where }) => state.scoutProfiles.get(where.userId) || null,
@@ -823,6 +828,22 @@ test('the shortlist only accepts available athletes, and keeps a placeholder whe
   const list = await call('GET', '/api/shortlist', { as });
   assert.deepEqual(list.body.map((e) => e.unavailable), [true, true]);
   assert.deepEqual(list.body.map((e) => e.Player), [null, null]);
+});
+
+test('a scout can edit the note on their own shortlist entry, and the athlete detail says if it is shortlisted', async () => {
+  state.athletes.set('ath-1', visibleAthlete());
+  const as = scoutToken();
+  assert.equal((await call('GET', '/api/players/ath-1', { as })).body.shortlistId, null);
+
+  const added = await call('POST', '/api/shortlist', { as, body: { playerId: 'ath-1' } });
+  const entryId = state.shortlistRows[0].id;
+  assert.equal(added.status, 201);
+  assert.equal((await call('GET', '/api/players/ath-1', { as })).body.shortlistId, entryId);
+
+  const edited = await call('PATCH', `/api/shortlist/${entryId}`, { as, body: { notes: '  Watch again in March ' } });
+  assert.equal(edited.status, 200);
+  assert.equal(state.shortlistRows[0].notes, 'Watch again in March');
+  assert.equal((await call('PATCH', '/api/shortlist/nope', { as, body: { notes: 'x' } })).status, 404);
 });
 
 test('coaches record guardian consent, which needs a guardian name, and can withdraw it', async () => {

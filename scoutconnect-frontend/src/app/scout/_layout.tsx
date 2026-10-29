@@ -52,6 +52,8 @@ export default function ScoutLayout() {
           tabBarIcon: ({ color, size }) => <Ionicons name="person-outline" size={size || 22} color={color} /> 
         }} 
       />
+      {/* Athlete detail opens on top of the tabs; it is not a tab itself */}
+      <Tabs.Screen name="player/[id]" options={{ href: null }} />
     </Tabs>
   );
 }

@@ -1,12 +1,13 @@
 // src/app/coach/player/[id].tsx
-import React, { useEffect, useState } from 'react';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, ActivityIndicator, Dimensions, Image } from 'react-native';
+import React, { useCallback, useEffect, useState } from 'react';
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, ActivityIndicator, Dimensions, Image, Alert } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { useLocalSearchParams, useRouter } from 'expo-router';
+import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
 import { LineChart, ProgressChart } from 'react-native-chart-kit';
 import { apiFetch } from '../../../lib/api';
-import { pillarScores } from '../../../lib/ratings';
+import { pillarScores, progressPoints } from '../../../lib/ratings';
 import { consentBadge } from '../../../lib/consent';
+import { shareReportPdf } from '../../../lib/reportExport';
 import { Ionicons } from '@expo/vector-icons';
 import { Colors, CardSpec } from '../../../constants/designSystem';
 import EditAthleteModal from '../../../components/EditAthleteModal';
@@ -28,11 +29,19 @@ interface Evaluation {
   areasForImprovement?: string;
   checklistData?: {
     averages?: {
-      technical: number;
-      tactical: number;
-      physical: number;
-      psychological: number;
+      technical: number | null;
+      tactical?: number | null;
+      physical: number | null;
+      psychological: number | null;
+      overall?: number | null;
+      scale?: number;
     };
+    dominantFoot?: string;
+    sprint10m?: number | null;
+    sprint30m?: number | null;
+    bleepLevel?: number | null;
+    heightCm?: number | null;
+    weightKg?: number | null;
     strengths?: string;
     areasForImprovement?: string;
     evaluatorName?: string;
@@ -99,9 +108,12 @@ export default function PlayerProfileScreen() {
   const [editingAch, setEditingAch] = useState<EditableAchievement | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
 
-  useEffect(() => {
-    if (id) fetchPlayerDetails();
-  }, [id]);
+  // Refetch on every focus so edits and newly synced stats show without leaving the screen and coming back.
+  useFocusEffect(
+    useCallback(() => {
+      if (id) fetchPlayerDetails();
+    }, [id])
+  );
 
   const fetchPlayerDetails = async () => {
     try {
@@ -134,25 +146,57 @@ export default function PlayerProfileScreen() {
   }
 
   const hasEvals = player.Evaluations && player.Evaluations.length > 0;
-  let ringChartData = { labels: ["Physical", "Technical", "Tactical"], data: [0, 0, 0] };
-  let lineChartData = { labels: ['Start'], datasets: [{ data: [0] }] };
+  let ringChartData = { labels: ["Physical", "Technical", "Coaching"], data: [0, 0, 0] };
   const latestEval = hasEvals ? player.Evaluations![player.Evaluations!.length - 1] : null;
 
   if (latestEval) {
     // Unrated pillars show as empty rings; nothing is guessed (see lib/ratings.ts).
     const scores = pillarScores(latestEval);
     ringChartData = {
-      labels: ["Physical", "Technical", "Tactical"],
-      data: [scores.physical ?? 0, scores.technical ?? 0, scores.tactical ?? 0]
+      labels: ["Physical", "Technical", "Coaching"],
+      data: [scores.physical ?? 0, scores.technical ?? 0, scores.coaching ?? 0]
     };
 
-    const historyLabels = player.Evaluations!.map((_, index) => `E${index + 1}`);
-    const historyData = player.Evaluations!.map(ev => ev.dribblingScore || 0);
-
-    if (historyData.length > 1) {
-      lineChartData = { labels: historyLabels, datasets: [{ data: historyData }] };
-    }
   }
+
+  // Progress over time: one line per category, all on 1-5. Only evaluations with all three categories rated are plotted.
+  const progress = progressPoints(player.Evaluations ?? []);
+  const progressLabels = progress.map(({ source }, index) => {
+    const date = source.evaluationDate || source.checklistData?.evaluationDate || source.createdAt?.slice(0, 10) || '';
+    // Thin the labels out when there are many evaluations so they stay readable.
+    return progress.length > 6 && index % 2 === 1 ? '' : date.slice(5).replace('-', '/');
+  });
+  const lineChartData = {
+    labels: progressLabels,
+    datasets: [
+      { data: progress.map((p) => p.technical), color: () => PROGRESS_COLORS.technical, strokeWidth: 2 },
+      { data: progress.map((p) => p.physical), color: () => PROGRESS_COLORS.physical, strokeWidth: 2 },
+      { data: progress.map((p) => p.coaching), color: () => PROGRESS_COLORS.coaching, strokeWidth: 2 },
+      // Invisible series that pins the vertical axis to 1-5 so improvement looks the same for every player.
+      { data: progress.map((_, i) => (i % 2 === 0 ? 5 : 1)), color: () => 'rgba(0,0,0,0)', withDots: false },
+    ],
+    legend: ['Technical', 'Physical', 'Coaching'],
+  };
+
+  const downloadReport = () => {
+    const share = (includeNotes: boolean) =>
+      shareReportPdf({
+        audience: 'coach',
+        name: player.name,
+        position: player.position,
+        dateOfBirth: player.dateOfBirth,
+        clubName: player.Club?.name,
+        evaluations: player.Evaluations ?? [],
+        matchStats: player.MatchStats ?? [],
+        achievements: player.Achievements ?? [],
+        includeNotes,
+      });
+    Alert.alert('Download PDF report', "Include your private notes (strengths and areas for improvement)? Anyone you send the PDF to will be able to read them.", [
+      { text: 'Cancel', style: 'cancel' },
+      { text: 'Without notes', onPress: () => share(false) },
+      { text: 'With notes', onPress: () => share(true) },
+    ]);
+  };
 
   return (
     <SafeAreaView style={styles.container}>
@@ -163,6 +207,9 @@ export default function PlayerProfileScreen() {
         </TouchableOpacity>
         <Text style={styles.header}>Athlete Profile</Text>
         <View style={styles.headerActions}>
+          <TouchableOpacity onPress={downloadReport} style={styles.headerIconBtn} accessibilityLabel="Download PDF report">
+            <Ionicons name="download-outline" size={20} color={Colors.secondary} />
+          </TouchableOpacity>
           <TouchableOpacity onPress={() => setEditingAthlete(true)} style={styles.headerIconBtn} accessibilityLabel="Edit athlete">
             <Ionicons name="create-outline" size={20} color={Colors.secondary} />
           </TouchableOpacity>
@@ -230,25 +277,36 @@ export default function PlayerProfileScreen() {
 
             {latestEval.checklistData?.averages && (
               <View style={styles.checklistSummaryBox}>
-                <Text style={styles.checklistSubTitle}>4-PILLAR CHECKLIST AVERAGES (OUT OF 4.0)</Text>
+                <Text style={styles.checklistSubTitle}>CHECKLIST AVERAGES (OUT OF {latestEval.checklistData.averages.scale ?? 4}.0)</Text>
                 <View style={styles.pillarRow}>
-                  <View style={styles.pillarPill}>
-                    <Text style={styles.pillarLabel}>TECH</Text>
-                    <Text style={styles.pillarVal}>{latestEval.checklistData.averages.technical}</Text>
-                  </View>
-                  <View style={styles.pillarPill}>
-                    <Text style={styles.pillarLabel}>TACT</Text>
-                    <Text style={styles.pillarVal}>{latestEval.checklistData.averages.tactical}</Text>
-                  </View>
-                  <View style={styles.pillarPill}>
-                    <Text style={styles.pillarLabel}>PHYS</Text>
-                    <Text style={styles.pillarVal}>{latestEval.checklistData.averages.physical}</Text>
-                  </View>
-                  <View style={styles.pillarPill}>
-                    <Text style={styles.pillarLabel}>PSYCH</Text>
-                    <Text style={styles.pillarVal}>{latestEval.checklistData.averages.psychological}</Text>
-                  </View>
+                  {([
+                    ['TECH', latestEval.checklistData.averages.technical],
+                    ['PHYS', latestEval.checklistData.averages.physical],
+                    // Evaluations saved on the older form also have a tactical rating; the current one does not.
+                    ...(latestEval.checklistData.averages.tactical ? [['TACT', latestEval.checklistData.averages.tactical]] : []),
+                    [latestEval.checklistData.averages.scale ? 'COACH' : 'PSYCH', latestEval.checklistData.averages.psychological],
+                  ] as [string, number | null | undefined][]).map(([label, value]) => (
+                    <View key={label} style={styles.pillarPill}>
+                      <Text style={styles.pillarLabel}>{label}</Text>
+                      <Text style={styles.pillarVal}>{value ?? '–'}</Text>
+                    </View>
+                  ))}
                 </View>
+                {latestEval.checklistData.dominantFoot || latestEval.checklistData.sprint30m || latestEval.checklistData.heightCm ? (
+                  <View style={styles.noteBlock}>
+                    <Text style={styles.noteHeading}>Biometrics:</Text>
+                    <Text style={styles.noteBody}>
+                      {[
+                        latestEval.checklistData.dominantFoot && `Dominant foot: ${latestEval.checklistData.dominantFoot}`,
+                        latestEval.checklistData.sprint10m && `10m: ${latestEval.checklistData.sprint10m}s`,
+                        latestEval.checklistData.sprint30m && `30m: ${latestEval.checklistData.sprint30m}s`,
+                        latestEval.checklistData.bleepLevel && `Bleep: ${latestEval.checklistData.bleepLevel}`,
+                        latestEval.checklistData.heightCm && `${latestEval.checklistData.heightCm} cm`,
+                        latestEval.checklistData.weightKg && `${latestEval.checklistData.weightKg} kg`,
+                      ].filter(Boolean).join('  •  ')}
+                    </Text>
+                  </View>
+                ) : null}
 
                 {(latestEval.strengths || latestEval.checklistData?.strengths) ? (
                   <View style={styles.noteBlock}>
@@ -266,18 +324,21 @@ export default function PlayerProfileScreen() {
               </View>
             )}
 
-            {player.Evaluations!.length > 1 && (
-              <>
-                <Text style={[styles.sectionTitle, { marginTop: 20 }]}>Technical Progression</Text>
-                <LineChart
-                  data={lineChartData}
-                  width={screenWidth}
-                  height={180}
-                  chartConfig={chartConfig}
-                  bezier
-                  style={styles.chart}
-                />
-              </>
+            <Text style={[styles.sectionTitle, { marginTop: 20 }]}>Progress Over Time</Text>
+            {progress.length > 1 ? (
+              <LineChart
+                data={lineChartData}
+                width={screenWidth}
+                height={220}
+                chartConfig={chartConfig}
+                withShadow={false}
+                fromZero={false}
+                segments={4}
+                formatYLabel={(y) => Number(y).toFixed(0)}
+                style={styles.chart}
+              />
+            ) : (
+              <Text style={styles.emptySubtext}>Log at least two complete evaluations to see how this player is progressing.</Text>
             )}
           </View>
         ) : (
@@ -306,7 +367,7 @@ export default function PlayerProfileScreen() {
                   </TouchableOpacity>
                 </View>
                 <Text style={styles.statMatchup}>
-                  Overall {ev.overallRating ?? '–'}/5 • Evaluator: {ev.evaluatorName || ev.checklistData?.evaluatorName || 'Not recorded'}
+                  Overall {ev.checklistData?.averages?.overall ?? ev.overallRating ?? '–'}/5 • Evaluator: {ev.evaluatorName || ev.checklistData?.evaluatorName || 'Not recorded'}
                 </Text>
               </View>
             ))
@@ -412,6 +473,8 @@ export default function PlayerProfileScreen() {
   );
 }
 
+const PROGRESS_COLORS = { technical: '#2E8B57', physical: '#2563EB', coaching: '#F59E0B' };
+
 const chartConfig = {
   backgroundGradientFrom: '#fff',
   backgroundGradientTo: '#fff',
@@ -430,7 +493,7 @@ const styles = StyleSheet.create({
   backBtnWrapper: { flexDirection: 'row', alignItems: 'center', gap: 4, padding: 5 },
   backBtn: { fontSize: 16, color: Colors.secondary, fontWeight: 'bold' },
   header: { fontSize: 20, fontWeight: 'bold', color: Colors.textPrimary },
-  headerActions: { flexDirection: 'row', width: 60, justifyContent: 'flex-end', gap: 4 },
+  headerActions: { flexDirection: 'row', width: 96, justifyContent: 'flex-end', gap: 4 },
   headerIconBtn: { padding: 5 },
 
   heroCard: { backgroundColor: Colors.primary, padding: 25, borderRadius: 12, marginBottom: 15, alignItems: 'center', elevation: 4 },

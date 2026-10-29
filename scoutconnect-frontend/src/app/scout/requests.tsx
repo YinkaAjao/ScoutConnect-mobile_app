@@ -126,7 +126,6 @@ export default function RequestsScreen() {
   if (notApproved) {
     return (
       <SafeAreaView style={styles.container}>
-        <Text style={styles.header}>My Requests</Text>
         <ScoutAccreditationPanel onApproved={() => { setNotApproved(false); setLoading(true); load().finally(() => setLoading(false)); }} />
       </SafeAreaView>
     );

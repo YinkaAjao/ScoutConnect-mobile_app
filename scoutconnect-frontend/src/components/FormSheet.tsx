@@ -9,11 +9,13 @@ interface Props {
   saving: boolean;
   onCancel: () => void;
   onSave: () => void;
+  /** Label of the confirm button; "Save Changes" suits edits, "Send request" suits something sent. */
+  saveLabel?: string;
   children: React.ReactNode;
 }
 
-/** Bottom-sheet form container with Cancel / Save Changes actions. */
-export default function FormSheet({ visible, title, saving, onCancel, onSave, children }: Props) {
+/** Bottom-sheet form container with Cancel / confirm actions (the confirm label defaults to "Save Changes"). */
+export default function FormSheet({ visible, title, saving, onCancel, onSave, saveLabel = 'Save Changes', children }: Props) {
   return (
     <Modal visible={visible} animationType="slide" transparent onRequestClose={onCancel}>
       <KeyboardAvoidingView style={styles.overlay} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
@@ -25,7 +27,7 @@ export default function FormSheet({ visible, title, saving, onCancel, onSave, ch
               <Text style={styles.cancelText}>Cancel</Text>
             </TouchableOpacity>
             <TouchableOpacity style={styles.saveBtn} onPress={onSave} disabled={saving} accessibilityRole="button">
-              {saving ? <ActivityIndicator color="#fff" /> : <Text style={styles.saveText}>Save Changes</Text>}
+              {saving ? <ActivityIndicator color="#fff" /> : <Text style={styles.saveText}>{saveLabel}</Text>}
             </TouchableOpacity>
           </View>
         </View>
