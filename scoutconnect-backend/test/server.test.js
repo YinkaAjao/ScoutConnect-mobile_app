@@ -59,7 +59,7 @@ const fakeModels = () => {
     },
   });
   return {
-    sequelize: { transaction: async (work) => (work ? work({}) : { commit: async () => {}, rollback: async () => {} }) },
+    sequelize: { query: async () => [], transaction: async (work) => (work ? work({}) : { commit: async () => {}, rollback: async () => {} }) },
     User: {
       findAll: async () => state.owners,
       findOne: async () => state.owner,
