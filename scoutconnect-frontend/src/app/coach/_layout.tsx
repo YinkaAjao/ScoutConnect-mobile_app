@@ -2,9 +2,11 @@ import React, { useEffect } from 'react';
 import { AppState } from 'react-native';
 import { Tabs } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
+import { useTabBarOptions } from '../../theme/theme';
 import { refreshVerificationCue, useClubTabBadge } from '../../lib/verificationSeen';
 
 export default function CoachLayout() {
+  const screenOptions = useTabBarOptions('#2E8B57');
   const clubBadge = useClubTabBadge(); // new verification decision + scout requests waiting
 
   // Look for a new verification decision at start-up and whenever the app comes back to the foreground.
@@ -17,7 +19,7 @@ export default function CoachLayout() {
   }, []);
 
   return (
-    <Tabs screenOptions={{ tabBarActiveTintColor: '#2E8B57', headerShown: false }}>
+    <Tabs screenOptions={screenOptions}>
       <Tabs.Screen
         name="index"
         options={{

@@ -17,7 +17,7 @@ export function confirmRemoveAthlete(athlete: { id: string; name: string }, onRe
             await apiFetch(`/club/players/${athlete.id}`, { method: 'DELETE' });
             onRemoved();
           } catch (error: any) {
-            Alert.alert('Could not remove athlete', error?.message || String(error));
+            Alert.alert('Could not remove athlete', error?.message || 'Please try again.');
           }
         },
       },
@@ -42,7 +42,7 @@ export function confirmRemoveRecord(
           await apiFetch(`/club/${kind}/${id}`, { method: 'DELETE' });
           onRemoved();
         } catch (error: any) {
-          Alert.alert('Could not remove record', error?.message || String(error));
+          Alert.alert('Could not remove record', error?.message || 'Please try again.');
         }
       },
     },

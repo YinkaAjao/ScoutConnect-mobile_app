@@ -1,5 +1,6 @@
 // src/app/admin/index.tsx
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useState, useMemo } from 'react';
+import ModalBackdrop from '../../components/ModalBackdrop';
 import { View, Text, FlatList, StyleSheet, TouchableOpacity, RefreshControl, ActivityIndicator, Modal, TextInput, Alert, Image, Switch } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter, useFocusEffect } from 'expo-router';
@@ -9,7 +10,8 @@ import { Ionicons } from '@expo/vector-icons';
 import { supabase } from '../../lib/supabase';
 import { apiFetch } from '../../lib/api';
 import { getDocumentUrl, isPdf } from '../../lib/verification';
-import { Colors, CardSpec } from '../../constants/designSystem';
+import { ThemeQuickToggle } from '../../components/AppearanceToggle';
+import { useColors, makeCardSpec, useSheetPad, type ThemeColors } from '../../theme/theme';
 
 type Section = 'Clubs' | 'Scouts' | 'Reports';
 
@@ -85,6 +87,9 @@ const ENDPOINT: Record<Section, { list: string; decide: (id: string) => string }
 const formatDate = (iso?: string | null) => (iso ? new Date(iso).toLocaleDateString() : '—');
 
 export default function AdminReviewScreen() {
+  const Colors = useColors();
+  const styles = useMemo(() => makeStyles(Colors), [Colors]);
+  const sheetPad = useSheetPad();
   const router = useRouter();
   const [authorised, setAuthorised] = useState<boolean | null>(null);
   const [section, setSection] = useState<Section>('Clubs');
@@ -148,7 +153,7 @@ export default function AdminReviewScreen() {
       try {
         await WebBrowser.openBrowserAsync(await getDocumentUrl(path));
       } catch (e: any) {
-        Alert.alert('Could not open document', e?.message || String(e));
+        Alert.alert('Could not open document', e?.message || 'Please try again.');
       }
       return;
     }
@@ -158,7 +163,7 @@ export default function AdminReviewScreen() {
       setViewerUrl(await getDocumentUrl(path));
     } catch (e: any) {
       setViewerUrl(null);
-      Alert.alert('Could not open document', e?.message || String(e));
+      Alert.alert('Could not open document', e?.message || 'Please try again.');
     } finally {
       setViewerLoading(false);
     }
@@ -176,7 +181,7 @@ export default function AdminReviewScreen() {
       setHideAthlete(false);
       setItems((prev) => prev.filter((i) => i.id !== item.id)); // it now belongs under a different tab
     } catch (e: any) {
-      Alert.alert('Could not record the decision', e?.message || String(e));
+      Alert.alert('Could not record the decision', e?.message || 'Please try again.');
     } finally {
       setDeciding(false);
     }
@@ -212,7 +217,7 @@ export default function AdminReviewScreen() {
             await apiFetch(`/admin/players/${athlete.id}/scout-visibility`, { method: 'PUT', body: { hidden: false } });
             setItems((prev) => prev.map((i) => (i.id === item.id && 'athlete' in i && i.athlete ? { ...i, athlete: { ...i.athlete, scoutHidden: false } } : i)));
           } catch (e: any) {
-            Alert.alert('Could not restore visibility', e?.message || String(e));
+            Alert.alert('Could not restore visibility', e?.message || 'Please try again.');
           }
         },
       },
@@ -353,7 +358,7 @@ export default function AdminReviewScreen() {
       <View style={[styles.card, urgent && styles.cardUrgent]}>
         <View style={styles.reportHeader}>
           <View style={[styles.categoryPill, urgent && styles.categoryPillUrgent]}>
-            {urgent && <Ionicons name="warning" size={12} color="#B91C1C" accessibilityLabel="Urgent" />}
+            {urgent && <Ionicons name="warning" size={12} color={Colors.dangerText} accessibilityLabel="Urgent" />}
             <Text style={[styles.categoryText, urgent && styles.categoryTextUrgent]}>{item.category}</Text>
           </View>
           <Text style={styles.dates}>{formatDate(item.createdAt)}</Text>
@@ -413,9 +418,12 @@ export default function AdminReviewScreen() {
     <SafeAreaView style={styles.container}>
       <View style={styles.topRow}>
         <Text style={styles.header}>Review</Text>
-        <TouchableOpacity onPress={signOut} accessibilityRole="button" accessibilityLabel="Sign out">
-          <Ionicons name="log-out-outline" size={22} color={Colors.danger} />
-        </TouchableOpacity>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 14 }}>
+          <ThemeQuickToggle />
+          <TouchableOpacity onPress={signOut} accessibilityRole="button" accessibilityLabel="Sign out">
+            <Ionicons name="log-out-outline" size={22} color={Colors.danger} />
+          </TouchableOpacity>
+        </View>
       </View>
 
       <View style={styles.sections}>
@@ -453,8 +461,9 @@ export default function AdminReviewScreen() {
         />
       )}
 
-      <Modal visible={viewerUrl !== null} animationType="fade" transparent onRequestClose={() => setViewerUrl(null)}>
+      <Modal statusBarTranslucent navigationBarTranslucent visible={viewerUrl !== null} animationType="fade" transparent onRequestClose={() => setViewerUrl(null)}>
         <View style={styles.viewerOverlay}>
+          <ModalBackdrop onPress={() => setViewerUrl(null)} />
           {viewerLoading || !viewerUrl ? <ActivityIndicator size="large" color="#fff" /> : <Image source={{ uri: viewerUrl }} style={styles.viewerImage} resizeMode="contain" />}
           <TouchableOpacity style={styles.viewerClose} onPress={() => setViewerUrl(null)} accessibilityRole="button" accessibilityLabel="Close document">
             <Ionicons name="close" size={26} color="#fff" />
@@ -462,9 +471,10 @@ export default function AdminReviewScreen() {
         </View>
       </Modal>
 
-      <Modal visible={decision !== null} animationType="slide" transparent onRequestClose={() => setDecision(null)}>
+      <Modal statusBarTranslucent navigationBarTranslucent visible={decision !== null} animationType="slide" transparent onRequestClose={() => setDecision(null)}>
         <View style={styles.sheetOverlay}>
-          <View style={styles.sheet}>
+          <ModalBackdrop onPress={() => setDecision(null)} />
+          <View style={[styles.sheet, sheetPad]}>
             <Text style={styles.sheetTitle}>{decision ? decisionTitle[decision.kind] : ''}</Text>
             <Text style={styles.sheetSub}>
               {decision?.kind === 'resolve'
@@ -509,58 +519,58 @@ export default function AdminReviewScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (Colors: ThemeColors) => StyleSheet.create({
   container: { flex: 1, backgroundColor: Colors.canvas, paddingHorizontal: 15 },
   center: { flex: 1, justifyContent: 'center', alignItems: 'center' },
   topRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 14 },
   header: { fontSize: 22, fontWeight: 'bold', color: Colors.textPrimary },
   sections: { flexDirection: 'row', gap: 8, marginBottom: 10 },
-  section: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, paddingVertical: 10, borderRadius: 10, backgroundColor: '#E5E7EB' },
+  section: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, paddingVertical: 10, borderRadius: 10, backgroundColor: Colors.border },
   sectionActive: { backgroundColor: Colors.primary },
   sectionText: { fontSize: 14, fontWeight: '600', color: Colors.textSecondary },
   sectionTextActive: { color: '#fff', fontWeight: 'bold' },
-  tabs: { flexDirection: 'row', backgroundColor: '#E5E7EB', borderRadius: 10, padding: 3, marginBottom: 12 },
+  tabs: { flexDirection: 'row', backgroundColor: Colors.border, borderRadius: 10, padding: 3, marginBottom: 12 },
   tab: { flex: 1, alignItems: 'center', paddingVertical: 8, borderRadius: 8 },
-  tabActive: { backgroundColor: '#fff' },
+  tabActive: { backgroundColor: Colors.card },
   tabText: { fontSize: 12, fontWeight: '600', color: Colors.textSecondary },
   tabTextActive: { color: Colors.primary, fontWeight: 'bold' },
-  card: { ...CardSpec, padding: 16, marginBottom: 14 },
+  card: { ...makeCardSpec(Colors), padding: 16, marginBottom: 14 },
   name: { fontSize: 18, fontWeight: 'bold', color: Colors.textPrimary },
   meta: { fontSize: 12, color: Colors.textSecondary, marginTop: 2, marginBottom: 6 },
   block: { marginTop: 10 },
   blockLabel: { fontSize: 10, fontWeight: 'bold', color: '#9CA3AF', marginBottom: 3 },
   blockText: { fontSize: 13, color: Colors.textPrimary, lineHeight: 19 },
-  docRow: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 9, borderTopWidth: 1, borderTopColor: '#F3F4F6' },
+  docRow: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 9, borderTopWidth: 1, borderTopColor: Colors.surfaceMuted },
   docText: { flex: 1, fontSize: 13, color: Colors.textPrimary },
   dates: { fontSize: 11, color: Colors.textSecondary, marginTop: 10 },
-  reasonText: { fontSize: 12, color: '#B91C1C', marginTop: 6 },
+  reasonText: { fontSize: 12, color: Colors.dangerText, marginTop: 6 },
   actions: { flexDirection: 'row', gap: 10, marginTop: 14 },
   btn: { flex: 1, alignItems: 'center', paddingVertical: 12, borderRadius: 10 },
   approveBtn: { backgroundColor: Colors.primary },
   approveText: { color: '#fff', fontWeight: 'bold' },
-  declineBtn: { borderWidth: 1, borderColor: '#FCA5A5', backgroundColor: '#FEF2F2' },
-  declineText: { color: '#B91C1C', fontWeight: 'bold' },
-  cancelBtn: { borderWidth: 1, borderColor: '#D1D5DB' },
+  declineBtn: { borderWidth: 1, borderColor: Colors.dangerBorder, backgroundColor: Colors.dangerBg },
+  declineText: { color: Colors.dangerText, fontWeight: 'bold' },
+  cancelBtn: { borderWidth: 1, borderColor: Colors.borderStrong },
   cancelText: { color: Colors.textSecondary, fontWeight: 'bold' },
-  cardUrgent: { borderWidth: 1.5, borderColor: '#F87171' },
+  cardUrgent: { borderWidth: 1.5, borderColor: Colors.dangerBorder },
   reportHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 },
-  categoryPill: { flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: '#F3F4F6', paddingHorizontal: 10, paddingVertical: 4, borderRadius: 12 },
-  categoryPillUrgent: { backgroundColor: '#FEE2E2' },
+  categoryPill: { flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: Colors.surfaceMuted, paddingHorizontal: 10, paddingVertical: 4, borderRadius: 12 },
+  categoryPillUrgent: { backgroundColor: Colors.dangerBg },
   categoryText: { fontSize: 11, fontWeight: 'bold', color: Colors.textSecondary },
-  categoryTextUrgent: { color: '#B91C1C' },
-  hiddenNote: { fontSize: 12, color: '#B91C1C', fontWeight: 'bold', marginTop: 10 },
-  hideRow: { flexDirection: 'row', alignItems: 'center', marginTop: 14, padding: 12, backgroundColor: '#F9FAFB', borderRadius: 10 },
+  categoryTextUrgent: { color: Colors.dangerText },
+  hiddenNote: { fontSize: 12, color: Colors.dangerText, fontWeight: 'bold', marginTop: 10 },
+  hideRow: { flexDirection: 'row', alignItems: 'center', marginTop: 14, padding: 12, backgroundColor: Colors.inputBg, borderRadius: 10 },
   hideTitle: { fontSize: 14, fontWeight: 'bold', color: Colors.textPrimary },
   hideHint: { fontSize: 12, color: Colors.textSecondary, lineHeight: 17, marginTop: 2 },
   empty: { alignItems: 'center', marginTop: 60, paddingHorizontal: 20 },
-  emptyTitle: { fontSize: 16, fontWeight: 'bold', color: '#555' },
-  emptyText: { fontSize: 13, color: '#888', marginTop: 6, textAlign: 'center' },
+  emptyTitle: { fontSize: 16, fontWeight: 'bold', color: Colors.textSecondary },
+  emptyText: { fontSize: 13, color: Colors.textSecondary, marginTop: 6, textAlign: 'center' },
   viewerOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.92)', justifyContent: 'center', alignItems: 'center' },
   viewerImage: { width: '100%', height: '85%' },
   viewerClose: { position: 'absolute', top: 50, right: 20, padding: 8 },
   sheetOverlay: { flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(0,0,0,0.5)' },
-  sheet: { backgroundColor: '#fff', borderTopLeftRadius: 20, borderTopRightRadius: 20, padding: 20 },
+  sheet: { backgroundColor: Colors.card, borderTopLeftRadius: 20, borderTopRightRadius: 20, padding: 20 },
   sheetTitle: { fontSize: 18, fontWeight: 'bold', color: Colors.textPrimary },
   sheetSub: { fontSize: 13, color: Colors.textSecondary, marginTop: 4, marginBottom: 12 },
-  reasonInput: { borderWidth: 1, borderColor: '#D1D5DB', borderRadius: 8, padding: 12, height: 90, textAlignVertical: 'top', fontSize: 14, color: Colors.textPrimary },
+  reasonInput: { borderWidth: 1, borderColor: Colors.borderStrong, borderRadius: 8, padding: 12, height: 90, textAlignVertical: 'top', fontSize: 14, color: Colors.textPrimary },
 });

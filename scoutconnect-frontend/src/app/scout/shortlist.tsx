@@ -6,9 +6,9 @@ import { Ionicons } from '@expo/vector-icons';
 import { apiFetch } from '../../lib/api';
 import ScoutAccreditationPanel from '../../components/ScoutAccreditationPanel';
 import ScoutPlayerRow from '../../components/ScoutPlayerRow';
-import FormSheet, { formStyles } from '../../components/FormSheet';
+import FormSheet, { useFormStyles } from '../../components/FormSheet';
 import { PlayerProspect, latestOverall } from '../../lib/scoutPlayer';
-import { Colors } from '../../constants/designSystem';
+import { useColors, type ThemeColors } from '../../theme/theme';
 
 interface ShortlistEntry {
   id: string;
@@ -26,6 +26,9 @@ const SORTS: { key: SortKey; label: string }[] = [
 ];
 
 export default function ShortlistScreen() {
+  const formStyles = useFormStyles();
+  const Colors = useColors();
+  const styles = useMemo(() => makeStyles(Colors), [Colors]);
   const [shortlist, setShortlist] = useState<ShortlistEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -81,7 +84,7 @@ export default function ShortlistScreen() {
               await apiFetch(`/shortlist/${id}`, { method: 'DELETE' });
               setShortlist((prev) => prev.filter((entry) => entry.id !== id)); // instant feedback
             } catch (e: any) {
-              Alert.alert('Could not remove entry', e?.message || String(e));
+              Alert.alert('Could not remove entry', e?.message || 'Please try again.');
             }
           },
         },
@@ -97,7 +100,7 @@ export default function ShortlistScreen() {
       setShortlist((prev) => prev.map((entry) => (entry.id === noteTarget.id ? { ...entry, notes: result?.notes ?? null } : entry)));
       setNoteTarget(null);
     } catch (e: any) {
-      Alert.alert('Could not save your note', e?.message || String(e));
+      Alert.alert('Could not save your note', e?.message || 'Please try again.');
     } finally {
       setSavingNote(false);
     }
@@ -274,29 +277,29 @@ export default function ShortlistScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (Colors: ThemeColors) => StyleSheet.create({
   container: { flex: 1, backgroundColor: Colors.canvas, paddingHorizontal: 15 },
   header: { fontSize: 24, fontWeight: 'bold', textAlign: 'center', marginTop: 15, marginBottom: 4, color: Colors.textPrimary },
   count: { fontSize: 12, color: Colors.textSecondary, textAlign: 'center', marginBottom: 12 },
-  searchContainer: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#FFF', paddingHorizontal: 12, borderRadius: 8, borderWidth: 1, borderColor: Colors.border, marginBottom: 10 },
+  searchContainer: { flexDirection: 'row', alignItems: 'center', backgroundColor: Colors.card, paddingHorizontal: 12, borderRadius: 8, borderWidth: 1, borderColor: Colors.border, marginBottom: 10 },
   searchInput: { flex: 1, paddingVertical: 10, fontSize: 14, color: Colors.textPrimary },
   sortRow: { flexDirection: 'row', gap: 6, marginBottom: 12 },
-  sortChip: { paddingVertical: 6, paddingHorizontal: 12, borderRadius: 16, backgroundColor: '#FFF', borderWidth: 1, borderColor: Colors.border },
+  sortChip: { paddingVertical: 6, paddingHorizontal: 12, borderRadius: 16, backgroundColor: Colors.card, borderWidth: 1, borderColor: Colors.border },
   sortChipActive: { backgroundColor: Colors.secondary, borderColor: Colors.secondary },
   sortChipText: { fontSize: 12, fontWeight: '600', color: Colors.textSecondary },
   sortChipTextActive: { color: '#FFF' },
-  footer: { borderTopWidth: 1, borderTopColor: '#F3F4F6', paddingHorizontal: 12, paddingVertical: 8 },
+  footer: { borderTopWidth: 1, borderTopColor: Colors.surfaceMuted, paddingHorizontal: 12, paddingVertical: 8 },
   noteText: { fontSize: 13, color: Colors.textPrimary, fontStyle: 'italic', lineHeight: 18, marginBottom: 6 },
   footerActions: { flexDirection: 'row', justifyContent: 'space-between' },
   footerBtn: { flexDirection: 'row', alignItems: 'center', gap: 5, paddingVertical: 4 },
   footerBtnText: { fontSize: 12, fontWeight: 'bold', color: Colors.secondary },
-  unavailable: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#F3F4F6', borderRadius: 14, padding: 14, marginBottom: 10 },
+  unavailable: { flexDirection: 'row', alignItems: 'center', backgroundColor: Colors.surfaceMuted, borderRadius: 14, padding: 14, marginBottom: 10 },
   unavailableTitle: { fontSize: 15, fontWeight: 'bold', color: Colors.textPrimary },
   unavailableText: { fontSize: 12, color: Colors.textSecondary, marginTop: 2 },
   iconBtn: { padding: 8 },
   emptyContainer: { alignItems: 'center', marginTop: 60, paddingHorizontal: 20, gap: 8 },
-  emptyText: { fontSize: 18, fontWeight: 'bold', color: '#555' },
-  emptySubtext: { fontSize: 14, color: '#888', textAlign: 'center' },
+  emptyText: { fontSize: 18, fontWeight: 'bold', color: Colors.textSecondary },
+  emptySubtext: { fontSize: 14, color: Colors.textSecondary, textAlign: 'center' },
   retryBtn: { marginTop: 14, backgroundColor: Colors.secondary, paddingHorizontal: 18, paddingVertical: 10, borderRadius: 8 },
   retryText: { color: '#fff', fontWeight: 'bold' },
 });

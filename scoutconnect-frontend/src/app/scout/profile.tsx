@@ -1,5 +1,6 @@
 // src/app/scout/profile.tsx
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useMemo } from 'react';
+import ModalBackdrop from '../../components/ModalBackdrop';
 import { View, Text, TouchableOpacity, StyleSheet, ScrollView, ActivityIndicator, Alert, Modal } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
@@ -7,7 +8,9 @@ import * as SecureStore from 'expo-secure-store';
 import { supabase } from '../../lib/supabase';
 import { apiFetch } from '../../lib/api';
 import { Ionicons } from '@expo/vector-icons';
-import { Colors, CardSpec } from '../../constants/designSystem';
+import AccountSecurity from '../../components/AccountSecurity';
+import AppearanceToggle from '../../components/AppearanceToggle';
+import { useColors, makeCardSpec, useSheetPad, type ThemeColors } from '../../theme/theme';
 
 const ACCREDITATION_LABEL: Record<string, string> = {
   Pending: 'Not applied',
@@ -18,6 +21,9 @@ const ACCREDITATION_LABEL: Record<string, string> = {
 };
 
 export default function ScoutProfileScreen() {
+  const Colors = useColors();
+  const styles = useMemo(() => makeStyles(Colors), [Colors]);
+  const sheetPad = useSheetPad();
   const router = useRouter();
 
   const [shortlistCount, setShortlistCount] = useState<number>(0);
@@ -164,11 +170,21 @@ export default function ScoutProfileScreen() {
           </TouchableOpacity>
         </View>
 
+        <AppearanceToggle />
+
+        {me?.email ? (
+          <AccountSecurity
+            email={me.email}
+            deleteSummary="This removes your name, email, phone, accreditation details, uploaded documents and shortlist, and closes any open requests. Requests you already sent stay in the club's history without your message."
+          />
+        ) : null}
+
       </ScrollView>
 
-      <Modal visible={activeModal !== null} animationType="slide" transparent={true}>
+      <Modal statusBarTranslucent navigationBarTranslucent visible={activeModal !== null} animationType="slide" transparent={true}>
         <View style={styles.modalOverlay}>
-          <View style={styles.modalContent}>
+          <ModalBackdrop onPress={() => setActiveModal(null)} />
+          <View style={[styles.modalContent, sheetPad]}>
             {activeModal === 'account' ? (
               <>
                 <View style={styles.rowCenter}>
@@ -213,18 +229,18 @@ export default function ScoutProfileScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (Colors: ThemeColors) => StyleSheet.create({
   container: { flex: 1, backgroundColor: Colors.canvas, paddingHorizontal: 15, paddingTop: 10 },
   rowCenter: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   topBanner: { backgroundColor: Colors.warningBg, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 12, paddingVertical: 8, borderRadius: 8, marginBottom: 12 },
   topBannerText: { color: Colors.warningText, fontWeight: 'bold', fontSize: 10 },
-  refreshPill: { flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: '#FFF', paddingHorizontal: 8, paddingVertical: 3, borderRadius: 10 },
+  refreshPill: { flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: Colors.card, paddingHorizontal: 8, paddingVertical: 3, borderRadius: 10 },
   refreshPillText: { color: Colors.warningText, fontSize: 10, fontWeight: 'bold' },
   header: { fontSize: 24, fontWeight: 'bold', marginBottom: 14, color: Colors.textPrimary },
   
   heroCard: { backgroundColor: Colors.secondary, borderRadius: 14, padding: 18, marginBottom: 15, elevation: 3 },
   heroTopRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 16 },
-  avatarCircle: { width: 54, height: 54, borderRadius: 27, backgroundColor: 'rgba(0,0,0,0.2)', justifyContent: 'center', alignItems: 'center', borderWidth: 2, borderColor: '#93C5FD' },
+  avatarCircle: { width: 54, height: 54, borderRadius: 27, backgroundColor: 'rgba(0,0,0,0.2)', justifyContent: 'center', alignItems: 'center', borderWidth: 2, borderColor: Colors.infoBorder },
   heroTitle: { fontSize: 18, fontWeight: 'bold', color: '#FFF' },
   heroSubtitle: { fontSize: 12, color: '#DBEAFE', marginTop: 2 },
   roleBadge: { backgroundColor: 'rgba(255,255,255,0.2)', paddingHorizontal: 10, paddingVertical: 4, borderRadius: 10 },
@@ -235,14 +251,14 @@ const styles = StyleSheet.create({
   heroMetricVal: { color: '#FFF', fontSize: 16, fontWeight: 'bold' },
   heroMetricLabel: { color: '#DBEAFE', fontSize: 11, marginTop: 2 },
 
-  card: { ...CardSpec, padding: 16, marginBottom: 15 },
+  card: { ...makeCardSpec(Colors), padding: 16, marginBottom: 15 },
   cardHeaderRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 },
   sectionTitle: { fontSize: 15, fontWeight: 'bold', color: Colors.textPrimary },
   sectionDesc: { fontSize: 12, color: Colors.textSecondary, lineHeight: 18, marginBottom: 12 },
   actionOutlineBtn: { flexDirection: 'row', justifyContent: 'center', alignItems: 'center', gap: 6, paddingVertical: 10, borderRadius: 8, backgroundColor: Colors.secondaryLight },
   actionOutlineText: { color: Colors.secondary, fontWeight: 'bold', fontSize: 13 },
 
-  menuCard: { ...CardSpec, padding: 12 },
+  menuCard: { ...makeCardSpec(Colors), padding: 12 },
   menuRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 10, paddingHorizontal: 4 },
   menuIconBox: { width: 36, height: 36, borderRadius: 8, justifyContent: 'center', alignItems: 'center', marginRight: 4 },
   menuItemTitle: { fontSize: 14, fontWeight: 'bold', color: Colors.textPrimary },
@@ -252,7 +268,7 @@ const styles = StyleSheet.create({
   logoutText: { color: Colors.danger, fontSize: 15, fontWeight: 'bold' },
 
   modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' },
-  modalContent: { backgroundColor: '#FFF', borderTopLeftRadius: 20, borderTopRightRadius: 20, padding: 20 },
+  modalContent: { backgroundColor: Colors.card, borderTopLeftRadius: 20, borderTopRightRadius: 20, padding: 20 },
   modalTitle: { fontSize: 17, fontWeight: 'bold', color: Colors.textPrimary },
   supportParagraph: { fontSize: 13, color: Colors.textSecondary, lineHeight: 20, marginTop: 12 },
   modalCloseBtn: { marginTop: 18, padding: 12, backgroundColor: Colors.secondary, borderRadius: 8, alignItems: 'center' },

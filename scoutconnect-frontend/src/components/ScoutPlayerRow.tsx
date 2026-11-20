@@ -1,8 +1,8 @@
 // src/components/ScoutPlayerRow.tsx
-import React from 'react';
+import React, { useMemo } from 'react';
 import { View, Text, Image, StyleSheet, TouchableOpacity } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { Colors, CardSpec } from '../constants/designSystem';
+import { useColors, makeCardSpec, type ThemeColors } from '../theme/theme';
 import { PlayerProspect, latestOverall, positionAgeLine } from '../lib/scoutPlayer';
 
 interface Props {
@@ -16,6 +16,8 @@ interface Props {
 
 /** One compact, tappable athlete row. Tapping opens the full profile. */
 export default function ScoutPlayerRow({ player, onPress, footer, trailing }: Props) {
+  const Colors = useColors();
+  const styles = useMemo(() => makeStyles(Colors), [Colors]);
   const overall = latestOverall(player);
   const status = player.contactRequest?.status;
 
@@ -53,10 +55,10 @@ export default function ScoutPlayerRow({ player, onPress, footer, trailing }: Pr
   );
 }
 
-const styles = StyleSheet.create({
-  card: { ...CardSpec, padding: 0, marginBottom: 10, overflow: 'hidden' },
+const makeStyles = (Colors: ThemeColors) => StyleSheet.create({
+  card: { ...makeCardSpec(Colors), padding: 0, marginBottom: 10, overflow: 'hidden' },
   main: { flexDirection: 'row', alignItems: 'center', gap: 12, padding: 12 },
-  avatar: { width: 46, height: 46, borderRadius: 23, backgroundColor: '#EEE' },
+  avatar: { width: 46, height: 46, borderRadius: 23, backgroundColor: Colors.surfaceMuted },
   avatarFallback: { backgroundColor: Colors.secondary, alignItems: 'center', justifyContent: 'center' },
   avatarText: { color: '#fff', fontSize: 18, fontWeight: 'bold' },
   info: { flex: 1 },
@@ -65,8 +67,8 @@ const styles = StyleSheet.create({
   detail: { fontSize: 12, color: Colors.textSecondary, marginTop: 1 },
   club: { fontSize: 12, color: Colors.textSecondary, marginTop: 1 },
   tag: { alignSelf: 'flex-start', fontSize: 10, fontWeight: 'bold', marginTop: 4, paddingHorizontal: 8, paddingVertical: 2, borderRadius: 10, overflow: 'hidden' },
-  tagPending: { backgroundColor: '#FEF3C7', color: '#B45309' },
-  tagAccepted: { backgroundColor: '#D1FAE5', color: '#047857' },
+  tagPending: { backgroundColor: Colors.warnBg, color: Colors.warnText },
+  tagAccepted: { backgroundColor: Colors.successBg, color: Colors.successText },
   ovr: { backgroundColor: Colors.secondaryLight, paddingHorizontal: 9, paddingVertical: 5, borderRadius: 8, alignItems: 'center', borderWidth: 1, borderColor: Colors.secondaryBorder },
   ovrLabel: { fontSize: 8, fontWeight: 'bold', color: Colors.secondary },
   ovrValue: { fontSize: 13, fontWeight: 'bold', color: Colors.secondary },

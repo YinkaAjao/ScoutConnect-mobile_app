@@ -157,11 +157,6 @@ module is missing in Expo Go, create a development build with `npx expo run:andr
 | Scout | Register in the app, then apply for accreditation on the Discover tab |
 | Administrator | In the Supabase dashboard, open the user and set `app_metadata` to `{"role": "admin"}` |
 
-_Test accounts for markers: davidajao619@gmail.com
-passcode: 123456
-
-This is the only recognized admin account, other sections can be tested by simply creating a new account.
-
 ## 5. Testing
 
 ```bash

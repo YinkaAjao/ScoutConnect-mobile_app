@@ -1,5 +1,6 @@
 // src/app/coach/index.tsx
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState, useMemo } from 'react';
+import ModalBackdrop from '../../components/ModalBackdrop';
 import { useFocusEffect } from 'expo-router';
 import { StyleSheet, Text, View, TextInput, TouchableOpacity, Alert, ScrollView, Image, ActivityIndicator, Modal, FlatList, Platform } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -11,13 +12,13 @@ import { RATING_SCALE, averageRated, overallFromAverages, parseMeasure } from '.
 import * as ImagePicker from 'expo-image-picker';
 import { Ionicons } from '@expo/vector-icons';
 import DateTimePicker from '@react-native-community/datetimepicker';
-import { Colors, CardSpec } from '../../constants/designSystem';
 import { POSITION_CATEGORIES } from '../../constants/positions';
 import { 
   initDB, saveEvaluationLocally, deleteEvaluationDraft, saveMatchStatLocally, saveAchievementLocally, 
   getDraftEvaluations, getUnsyncedEvaluations, getUnsyncedMatchStats, getUnsyncedAchievements, 
   markEvaluationsAsSynced, markMatchStatsAsSynced, markAchievementsAsSynced, discardLocalItems
 } from '../../../database';
+import { useColors, makeCardSpec, useSheetPad, type ThemeColors } from '../../theme/theme';
 
 const RATING_OPTIONS = [
   { value: 1, short: 'Poor', full: 'Poor' },
@@ -60,6 +61,9 @@ const MEASURES = {
 const unrated = (obj: Record<string, number>) => Object.keys(obj).filter((k) => obj[k] === 0).map((k) => ATTR_LABELS[k] ?? k);
 
 export default function CoachScreen() {
+  const Colors = useColors();
+  const styles = useMemo(() => makeStyles(Colors), [Colors]);
+  const sheetPad = useSheetPad();
   const [activeTab, setActiveTab] = useState<'Evaluation' | 'MatchStat' | 'Achievement'>('Evaluation'); 
   const [clubNameDisplay, setClubNameDisplay] = useState('');
   const [rosterList, setRosterList] = useState<any[]>([]);
@@ -72,6 +76,8 @@ export default function CoachScreen() {
   
   // --- STAGED CHECKLIST STATE ---
   const [currentStage, setCurrentStage] = useState<number>(1);
+  // Stage navigator: icons only by default (saves space on a phone); the chevron shows the stage names too.
+  const [stepperOpen, setStepperOpen] = useState(false);
   const [editingDraftId, setEditingDraftId] = useState<number | null>(null);
   // Furthest stage visited, and whether a final submit was tried: incomplete stages are only flagged once passed or attempted.
   const [reachedStage, setReachedStage] = useState<number>(1);
@@ -424,7 +430,7 @@ export default function CoachScreen() {
         );
       }
     } catch (error) {
-      let message = error instanceof Error ? error.message : 'Sync failed.';
+      let message = error instanceof ApiError ? error.message : 'Sync did not finish. Your records are safe on this phone and will upload when you are back online.';
       if (error instanceof ApiError) {
         if (error.code === 'NO_SESSION' || error.status === 403 && /token/i.test(error.message)) message = 'Your session has expired. Sign in again to sync.';
         else if (error.code === 'MEMBERSHIP_PENDING') message = 'Waiting for the club owner to approve your membership.';
@@ -442,7 +448,7 @@ export default function CoachScreen() {
     try {
       await persistEvaluationUnsafe(isDraftFlag);
     } catch (err) {
-      Alert.alert('Could not save', (err as Error).message);
+      Alert.alert('Could not save', (err as Error)?.message || 'Please check the details and try again.');
     }
   };
 
@@ -574,7 +580,8 @@ export default function CoachScreen() {
       Alert.alert('Saved to Local Cache', `Record securely linked to ${selectedPlayerNameDisplay} (ID: ${selectedPlayerId.substring(0, 6)}...).`);
       triggerSync();
     } catch (err) {
-      Alert.alert('Error', (err as Error).message);
+      console.warn('Local save failed:', err);
+      Alert.alert('Could not save on this phone', 'The record could not be stored on this device. Please try again, and free up storage space if the problem continues.');
     }
   };
 
@@ -714,7 +721,8 @@ export default function CoachScreen() {
               )}
             </View>
 
-            <View style={styles.stepperContainer}>
+            <View style={styles.stepperRow}>
+            <View style={[styles.stepperContainer, !stepperOpen && styles.stepperCollapsed]}>
               {STAGES.map((stage) => {
                 const isCurrent = currentStage === stage.id;
                 const flagged = isFlagged(stage.id);
@@ -724,6 +732,7 @@ export default function CoachScreen() {
                     key={stage.id}
                     style={[
                       styles.stepPill,
+                      !stepperOpen && styles.stepPillIcon,
                       isCurrent && styles.stepPillCurrent,
                       isCompleted && !isCurrent && styles.stepPillCompleted,
                       flagged && styles.stepPillMissing
@@ -735,15 +744,28 @@ export default function CoachScreen() {
                   >
                     <Ionicons
                       name={flagged ? 'alert-circle' : isCompleted ? 'checkmark-circle' : (stage.icon as any)}
-                      size={14}
+                      size={stepperOpen ? 14 : 18}
                       color={flagged ? Colors.danger : isCurrent || isCompleted ? '#FFF' : Colors.textSecondary}
                     />
-                    <Text style={[styles.stepPillText, (isCurrent || isCompleted) && !flagged && { color: '#FFF' }, flagged && { color: Colors.danger }]}>
+                    {stepperOpen && (
+                      <Text style={[styles.stepPillText, (isCurrent || isCompleted) && !flagged && { color: '#FFF' }, flagged && { color: Colors.danger }]}>
                       {stage.id}. {stage.title}
                     </Text>
+                    )}
                   </TouchableOpacity>
                 );
               })}
+            </View>
+            <TouchableOpacity
+              style={styles.stepperToggle}
+              onPress={() => setStepperOpen((o) => !o)}
+              accessibilityRole="button"
+              accessibilityLabel={stepperOpen ? 'Show stage icons only' : 'Show stage names'}
+              accessibilityState={{ expanded: stepperOpen }}
+              hitSlop={6}
+            >
+              <Ionicons name={stepperOpen ? 'chevron-up' : 'chevron-down'} size={18} color={Colors.textSecondary} />
+            </TouchableOpacity>
             </View>
 
             {isFlagged(currentStage) && (
@@ -868,7 +890,7 @@ export default function CoachScreen() {
                 </View>
                 
                 <Text style={styles.label}>Evaluation Date *</Text>
-                <View style={[styles.input, { backgroundColor: '#E5E7EB', borderColor: '#D1D5DB' }]}>
+                <View style={[styles.input, { backgroundColor: Colors.border, borderColor: Colors.borderStrong }]}>
                   <Text style={{ color: Colors.textSecondary }}>{new Date().toDateString()} (Auto-logged today)</Text>
                 </View>
               </View>
@@ -1158,9 +1180,10 @@ export default function CoachScreen() {
       </ScrollView>
 
       {/* POSITIONS DROPDOWN MODAL */}
-      <Modal visible={showPositionModal} animationType="slide" transparent={true}>
+      <Modal statusBarTranslucent navigationBarTranslucent visible={showPositionModal} animationType="slide" transparent={true}>
         <View style={styles.modalOverlay}>
-          <View style={styles.modalContent}>
+          <ModalBackdrop onPress={() => setShowPositionModal(false)} />
+          <View style={[styles.modalContent, sheetPad]}>
             <Text style={styles.modalTitle}>
               {positionTargetType === 'main' ? 'Select Main Position' : 'Select Secondary Position'}
             </Text>
@@ -1200,9 +1223,10 @@ export default function CoachScreen() {
       </Modal>
 
       {/* UNIQUE PLAYER PICKER MODAL */}
-      <Modal visible={showPlayerPickerModal} animationType="slide" transparent={true}>
+      <Modal statusBarTranslucent navigationBarTranslucent visible={showPlayerPickerModal} animationType="slide" transparent={true}>
         <View style={styles.modalOverlay}>
-          <View style={styles.modalContent}>
+          <ModalBackdrop onPress={() => setShowPlayerPickerModal(false)} />
+          <View style={[styles.modalContent, sheetPad]}>
             <Text style={styles.modalTitle}>Select Athlete from Roster</Text>
             <Text style={styles.modalSub}>Guarantees accurate unique identification for stats and medals.</Text>
             
@@ -1251,48 +1275,52 @@ export default function CoachScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (Colors: ThemeColors) => StyleSheet.create({
   container: { flex: 1, backgroundColor: Colors.canvas, padding: 15 },
   topBanner: { backgroundColor: Colors.warningBg, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 12, paddingVertical: 8, borderRadius: 8, marginBottom: 12 },
   topBannerText: { color: Colors.warningText, fontWeight: 'bold', fontSize: 11 },
-  pillBadge: { backgroundColor: '#FFF', paddingHorizontal: 8, paddingVertical: 2, borderRadius: 10 },
+  pillBadge: { backgroundColor: Colors.card, paddingHorizontal: 8, paddingVertical: 2, borderRadius: 10 },
   pillBadgeText: { color: Colors.warningText, fontSize: 10, fontWeight: 'bold' },
   headerRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 15 },
   subHeader: { fontSize: 11, fontWeight: 'bold', color: Colors.primary },
   header: { fontSize: 22, fontWeight: 'bold', color: Colors.textPrimary },
   coachBadge: { backgroundColor: Colors.primaryLight, paddingHorizontal: 10, paddingVertical: 4, borderRadius: 12 },
   coachBadgeText: { color: Colors.primary, fontSize: 11, fontWeight: 'bold' },
-  tabContainer: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 15, backgroundColor: '#E5E7EB', borderRadius: 8, padding: 4 },
+  tabContainer: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 15, backgroundColor: Colors.border, borderRadius: 8, padding: 4 },
   tabBtn: { flex: 1, paddingVertical: 8, alignItems: 'center', borderRadius: 6 },
-  tabBtnActive: { backgroundColor: '#FFF', elevation: 1 },
+  tabBtnActive: { backgroundColor: Colors.card, elevation: 1 },
   tabText: { color: Colors.textSecondary, fontWeight: '600', fontSize: 13 },
   tabTextActive: { color: Colors.primary, fontWeight: 'bold' },
   draftsCard: { backgroundColor: Colors.secondaryLight, padding: 14, borderRadius: 10, marginBottom: 15, borderWidth: 1, borderColor: Colors.secondaryBorder },
   draftsHeaderTitle: { fontWeight: 'bold', fontSize: 12, color: Colors.secondary },
-  draftItem: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#FFF', padding: 10, borderRadius: 8, marginTop: 6, borderWidth: 1, borderColor: Colors.border },
+  draftItem: { flexDirection: 'row', alignItems: 'center', backgroundColor: Colors.card, padding: 10, borderRadius: 8, marginTop: 6, borderWidth: 1, borderColor: Colors.border },
   draftItemActive: { borderColor: Colors.secondary, borderWidth: 1.5 },
   draftStageBadge: { backgroundColor: Colors.secondary, paddingHorizontal: 8, paddingVertical: 4, borderRadius: 6 },
   draftStageText: { color: '#FFF', fontSize: 11, fontWeight: 'bold' },
-  card: { ...CardSpec, padding: 18, marginBottom: 15 },
+  card: { ...makeCardSpec(Colors), padding: 18, marginBottom: 15 },
   fastTrackTag: { flexDirection: 'row', alignItems: 'center', backgroundColor: Colors.primaryLight, paddingHorizontal: 8, paddingVertical: 3, borderRadius: 6, alignSelf: 'flex-start' },
-  stepperContainer: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginBottom: 16, paddingBottom: 12, borderBottomWidth: 1, borderBottomColor: Colors.border },
-  stepPill: { flexDirection: 'row', alignItems: 'center', gap: 4, paddingVertical: 6, paddingHorizontal: 10, borderRadius: 16, backgroundColor: '#F3F4F6' },
+  stepperRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 8, marginBottom: 16, paddingBottom: 12, borderBottomWidth: 1, borderBottomColor: Colors.border },
+  stepperContainer: { flex: 1, flexDirection: 'row', flexWrap: 'wrap', gap: 6 },
+  stepperCollapsed: { flexWrap: 'nowrap' },
+  stepPillIcon: { flex: 1, justifyContent: 'center', paddingHorizontal: 0, paddingVertical: 8 },
+  stepperToggle: { width: 32, height: 32, borderRadius: 16, alignItems: 'center', justifyContent: 'center', backgroundColor: Colors.surfaceMuted },
+  stepPill: { flexDirection: 'row', alignItems: 'center', gap: 4, paddingVertical: 6, paddingHorizontal: 10, borderRadius: 16, backgroundColor: Colors.surfaceMuted },
   stepPillCurrent: { backgroundColor: Colors.primary },
   stepPillCompleted: { backgroundColor: Colors.secondary },
-  stepPillMissing: { backgroundColor: '#FEF2F2', borderWidth: 1, borderColor: Colors.danger },
-  inputError: { borderColor: Colors.danger, backgroundColor: '#FEF2F2' },
-  matrixRowMissing: { borderColor: Colors.danger, backgroundColor: '#FEF2F2' },
-  missingPill: { backgroundColor: '#FEE2E2' },
+  stepPillMissing: { backgroundColor: Colors.dangerBg, borderWidth: 1, borderColor: Colors.danger },
+  inputError: { borderColor: Colors.danger, backgroundColor: Colors.dangerBg },
+  matrixRowMissing: { borderColor: Colors.danger, backgroundColor: Colors.dangerBg },
+  missingPill: { backgroundColor: Colors.dangerBg },
   missingPillText: { color: Colors.danger },
-  footRowMissing: { borderWidth: 1, borderColor: Colors.danger, borderRadius: 8, backgroundColor: '#FEF2F2', padding: 4 },
+  footRowMissing: { borderWidth: 1, borderColor: Colors.danger, borderRadius: 8, backgroundColor: Colors.dangerBg, padding: 4 },
   summaryRow: { flexDirection: 'row', gap: 8, marginTop: 6 },
-  summaryPill: { flex: 1, alignItems: 'center', backgroundColor: '#F9FAFB', borderWidth: 1, borderColor: Colors.border, borderRadius: 8, paddingVertical: 8 },
+  summaryPill: { flex: 1, alignItems: 'center', backgroundColor: Colors.inputBg, borderWidth: 1, borderColor: Colors.border, borderRadius: 8, paddingVertical: 8 },
   summaryPillLabel: { fontSize: 10, fontWeight: 'bold', color: Colors.textSecondary },
   summaryPillValue: { fontSize: 18, fontWeight: 'bold', color: Colors.textPrimary, marginTop: 2 },
-  overallBox: { alignItems: 'center', marginTop: 10, marginBottom: 6, paddingVertical: 10, borderRadius: 8, backgroundColor: '#ECFDF5' },
+  overallBox: { alignItems: 'center', marginTop: 10, marginBottom: 6, paddingVertical: 10, borderRadius: 8, backgroundColor: Colors.successBg },
   overallLabel: { fontSize: 12, fontWeight: '600', color: Colors.textSecondary },
   overallValue: { fontSize: 24, fontWeight: 'bold', color: Colors.primary, marginTop: 2 },
-  missingBanner: { flexDirection: 'row', alignItems: 'flex-start', gap: 8, backgroundColor: '#FEF2F2', borderWidth: 1, borderColor: Colors.danger, borderRadius: 8, padding: 10, marginBottom: 12 },
+  missingBanner: { flexDirection: 'row', alignItems: 'flex-start', gap: 8, backgroundColor: Colors.dangerBg, borderWidth: 1, borderColor: Colors.danger, borderRadius: 8, padding: 10, marginBottom: 12 },
   missingBannerText: { flex: 1, fontSize: 12, fontWeight: '600', color: Colors.danger },
   stepPillText: { fontSize: 11, fontWeight: 'bold', color: Colors.textSecondary },
   sectionTitle: { fontSize: 17, fontWeight: 'bold', color: Colors.textPrimary },
@@ -1304,25 +1332,25 @@ const styles = StyleSheet.create({
   row: { flexDirection: 'row', justifyContent: 'space-between', gap: 8 },
   halfCol: { flex: 1 },
   label: { fontSize: 13, fontWeight: '600', marginTop: 8, color: Colors.textSecondary },
-  input: { backgroundColor: '#F9FAFB', borderWidth: 1, borderColor: Colors.border, borderRadius: 8, paddingHorizontal: 12, paddingVertical: 10, marginTop: 4, marginBottom: 8, fontSize: 14 },
-  dropdownSelector: { backgroundColor: '#F9FAFB', borderWidth: 1, borderColor: Colors.border, borderRadius: 8, paddingHorizontal: 12, paddingVertical: 12, marginTop: 4, marginBottom: 8, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  input: { backgroundColor: Colors.inputBg, borderWidth: 1, borderColor: Colors.border, borderRadius: 8, paddingHorizontal: 12, paddingVertical: 10, marginTop: 4, marginBottom: 8, fontSize: 14, color: Colors.textPrimary },
+  dropdownSelector: { backgroundColor: Colors.inputBg, borderWidth: 1, borderColor: Colors.border, borderRadius: 8, paddingHorizontal: 12, paddingVertical: 12, marginTop: 4, marginBottom: 8, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
   dropdownSelectorText: { fontSize: 14, color: Colors.textPrimary, fontWeight: '600' },
   
-  matrixRow: { marginBottom: 14, backgroundColor: '#F9FAFB', padding: 10, borderRadius: 8, borderWidth: 1, borderColor: Colors.border },
-  matrixRowUnreviewed: { borderColor: '#F59E0B', backgroundColor: '#FFFBEB' },
-  unreviewedPill: { backgroundColor: '#FEF3C7', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4 },
-  unreviewedPillText: { fontSize: 9, fontWeight: 'bold', color: '#B45309' },
+  matrixRow: { marginBottom: 14, backgroundColor: Colors.inputBg, padding: 10, borderRadius: 8, borderWidth: 1, borderColor: Colors.border },
+  matrixRowUnreviewed: { borderColor: '#F59E0B', backgroundColor: Colors.warnBg },
+  unreviewedPill: { backgroundColor: Colors.warnBg, paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4 },
+  unreviewedPillText: { fontSize: 9, fontWeight: 'bold', color: Colors.warnText },
   matrixHeaderRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 },
   matrixAttrLabel: { fontSize: 14, fontWeight: 'bold', color: Colors.textPrimary },
   matrixSelectedBadge: { fontSize: 11, fontWeight: 'bold', color: Colors.primary },
   matrixOptionsRow: { flexDirection: 'row', justifyContent: 'space-between', gap: 6 },
-  matrixOptionBtn: { flex: 1, paddingVertical: 8, paddingHorizontal: 4, borderRadius: 6, backgroundColor: '#FFF', borderWidth: 1, borderColor: Colors.border, alignItems: 'center' },
+  matrixOptionBtn: { flex: 1, paddingVertical: 8, paddingHorizontal: 4, borderRadius: 6, backgroundColor: Colors.card, borderWidth: 1, borderColor: Colors.border, alignItems: 'center' },
   matrixOptionBtnActive: { backgroundColor: Colors.primary, borderColor: Colors.primary },
   matrixOptionText: { fontSize: 11, fontWeight: '600', color: Colors.textSecondary, textAlign: 'center' },
   matrixOptionTextActive: { color: '#FFF', fontWeight: 'bold' },
   starRow: { flexDirection: 'row', gap: 12, marginVertical: 10, paddingHorizontal: 4 },
   stageFooterRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 18, paddingTop: 14, borderTopWidth: 1, borderTopColor: Colors.border, gap: 8 },
-  secondaryNavBtn: { flex: 0.28, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 4, paddingVertical: 12, borderRadius: 8, backgroundColor: '#E5E7EB' },
+  secondaryNavBtn: { flex: 0.28, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 4, paddingVertical: 12, borderRadius: 8, backgroundColor: Colors.border },
   secondaryNavBtnText: { color: Colors.textPrimary, fontWeight: 'bold', fontSize: 13 },
   draftSaveBtn: { flex: 0.38, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 4, paddingVertical: 12, borderRadius: 8, backgroundColor: Colors.secondaryLight, borderWidth: 1, borderColor: Colors.secondaryBorder },
   draftSaveBtnText: { color: Colors.secondary, fontWeight: 'bold', fontSize: 13 },
@@ -1331,10 +1359,10 @@ const styles = StyleSheet.create({
   primaryNavBtnText: { color: '#FFF', fontWeight: 'bold', fontSize: 13 },
   button: { backgroundColor: Colors.primary, padding: 15, borderRadius: 8, alignItems: 'center', marginTop: 15 },
   buttonText: { color: '#FFF', textAlign: 'center', fontWeight: 'bold', fontSize: 15 },
-  bufferCard: { backgroundColor: '#FFF', padding: 15, borderRadius: 10, marginBottom: 15, elevation: 1 },
+  bufferCard: { backgroundColor: Colors.card, padding: 15, borderRadius: 10, marginBottom: 15, elevation: 1 },
   countPill: { backgroundColor: Colors.secondaryLight, paddingHorizontal: 8, paddingVertical: 2, borderRadius: 10 },
   countPillText: { color: Colors.secondary, fontSize: 11, fontWeight: 'bold' },
-  queueItem: { flexDirection: 'row', alignItems: 'center', paddingVertical: 8, borderBottomWidth: 1, borderBottomColor: '#F3F4F6' },
+  queueItem: { flexDirection: 'row', alignItems: 'center', paddingVertical: 8, borderBottomWidth: 1, borderBottomColor: Colors.surfaceMuted },
   queueAvatar: { width: 32, height: 32, borderRadius: 16, backgroundColor: Colors.primary, justifyContent: 'center', alignItems: 'center' },
   statusBox: { backgroundColor: Colors.warningBg, padding: 15, borderRadius: 10, marginBottom: 20 },
   statusTitle: { fontWeight: 'bold', color: Colors.warningText, fontSize: 14 },
@@ -1350,13 +1378,13 @@ const styles = StyleSheet.create({
   prefillBtnText: { fontSize: 12, fontWeight: 'bold', color: Colors.secondary },
   
   modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' },
-  modalContent: { backgroundColor: '#FFF', borderTopLeftRadius: 20, borderTopRightRadius: 20, padding: 20, maxHeight: '80%' },
+  modalContent: { backgroundColor: Colors.card, borderTopLeftRadius: 20, borderTopRightRadius: 20, padding: 20, maxHeight: '80%' },
   modalTitle: { fontSize: 18, fontWeight: 'bold', color: Colors.textPrimary, marginBottom: 6 },
   modalSub: { fontSize: 12, color: Colors.textSecondary, marginBottom: 10 },
   modalCatHeader: { fontSize: 11, fontWeight: 'bold', color: Colors.primary, marginTop: 8, marginBottom: 4 },
-  modalPositionItem: { paddingVertical: 12, paddingHorizontal: 10, borderBottomWidth: 1, borderBottomColor: '#F3F4F6' },
+  modalPositionItem: { paddingVertical: 12, paddingHorizontal: 10, borderBottomWidth: 1, borderBottomColor: Colors.surfaceMuted },
   modalPositionText: { fontSize: 14, fontWeight: '600', color: Colors.textPrimary },
-  modalPlayerItem: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: '#F3F4F6' },
+  modalPlayerItem: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: Colors.surfaceMuted },
   modalPlayerName: { fontSize: 15, fontWeight: 'bold', color: Colors.textPrimary },
   modalPlayerMeta: { fontSize: 11, color: Colors.textSecondary, marginTop: 2 },
   modalCloseBtn: { marginTop: 15, padding: 12, backgroundColor: Colors.danger, borderRadius: 8, alignItems: 'center' },

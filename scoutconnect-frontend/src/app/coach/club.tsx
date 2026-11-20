@@ -1,15 +1,16 @@
 // src/app/coach/club.tsx
-import React, { useCallback, useState } from 'react';
+import React, { useCallback, useState, useMemo } from 'react';
+import ModalBackdrop from '../../components/ModalBackdrop';
 import { useFocusEffect } from 'expo-router';
-import { View, Text, StyleSheet, ActivityIndicator, ScrollView, Alert, TouchableOpacity, Modal, TextInput, KeyboardAvoidingView, Platform } from 'react-native';
+import { View, Text, StyleSheet, ActivityIndicator, ScrollView, Alert, TouchableOpacity, Modal, TextInput, KeyboardAvoidingView } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { apiFetch } from '../../lib/api';
-import { Colors, CardSpec } from '../../constants/designSystem';
 import { ENTITY_TYPES } from '../../constants/entityTypes';
 import VerificationCard from '../../components/VerificationCard';
 import ScoutRequestsCard from '../../components/ScoutRequestsCard';
 import { verificationLabel } from '../../lib/verification';
+import { useColors, makeCardSpec, useSheetPad, type ThemeColors } from '../../theme/theme';
 
 interface ClubInfo {
   id: string;
@@ -34,6 +35,9 @@ interface Member {
 const NOT_PROVIDED = 'Not provided';
 
 export default function ClubScreen() {
+  const Colors = useColors();
+  const styles = useMemo(() => makeStyles(Colors), [Colors]);
+  const sheetPad = useSheetPad();
   const [club, setClub] = useState<ClubInfo | null>(null);
   const [playerCount, setPlayerCount] = useState(0);
   const [membership, setMembership] = useState<'Active' | 'Pending' | 'Rejected'>('Active');
@@ -94,7 +98,7 @@ export default function ClubScreen() {
             await apiFetch(`/club/members/${member.id}`, { method: 'PUT', body: { action } });
             await loadMembers();
           } catch (e: any) {
-            Alert.alert('Could not update member', e?.message || String(e));
+            Alert.alert('Could not update member', e?.message || 'Please try again.');
           }
         },
       },
@@ -128,7 +132,7 @@ export default function ClubScreen() {
         Alert.alert('Verification removed', 'Changing the club name or classification means the club needs to be reviewed again. You can request verification from this screen.');
       }
     } catch (e: any) {
-      Alert.alert('Could not save changes', e?.message || String(e));
+      Alert.alert('Could not save changes', e?.message || 'Please try again.');
     } finally {
       setSaving(false);
     }
@@ -193,11 +197,11 @@ export default function ClubScreen() {
           </View>
           <Text style={styles.clubName}>{club.name}</Text>
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 4 }}>
-            <Ionicons name="location-outline" size={14} color="#666" />
+            <Ionicons name="location-outline" size={14} color={Colors.textSecondary} />
             <Text style={styles.region}>Region: {club.region || NOT_PROVIDED}</Text>
           </View>
           <View style={[styles.verifyPill, club.isVerified ? styles.verifiedBg : styles.provisionalBg]}>
-            <Text style={[styles.verifyText, club.isVerified ? { color: '#047857' } : { color: '#B45309' }]}>
+            <Text style={[styles.verifyText, club.isVerified ? { color: Colors.successText } : { color: Colors.warnText }]}>
               {verificationLabel(club)}
             </Text>
           </View>
@@ -295,9 +299,10 @@ export default function ClubScreen() {
         </View>
       </ScrollView>
 
-      <Modal visible={editing} animationType="slide" transparent onRequestClose={() => setEditing(false)}>
-        <KeyboardAvoidingView style={styles.modalOverlay} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
-          <View style={styles.modalContent}>
+      <Modal statusBarTranslucent navigationBarTranslucent visible={editing} animationType="slide" transparent onRequestClose={() => setEditing(false)}>
+        <KeyboardAvoidingView style={styles.modalOverlay} behavior="padding">
+          <ModalBackdrop onPress={() => setEditing(false)} />
+          <View style={[styles.modalContent, sheetPad]}>
             <Text style={styles.modalTitle}>Edit Club Details</Text>
             {club.isVerified && (
               <Text style={styles.verifiedWarning}>This club is verified. Changing its name or classification will remove the Verified badge until it is reviewed again.</Text>
@@ -346,34 +351,34 @@ export default function ClubScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (Colors: ThemeColors) => StyleSheet.create({
   container: { flex: 1, backgroundColor: Colors.canvas, padding: 20 },
   center: { flex: 1, justifyContent: 'center', alignItems: 'center', padding: 20 },
   centerSub: { fontSize: 13, color: Colors.textSecondary, textAlign: 'center', marginTop: 6, paddingHorizontal: 30, lineHeight: 19 },
   errorText: { fontSize: 16, color: Colors.danger, fontWeight: 'bold' },
   retryBtn: { marginTop: 16, backgroundColor: Colors.primary, paddingHorizontal: 20, paddingVertical: 10, borderRadius: 8 },
   retryText: { color: '#fff', fontWeight: 'bold' },
-  heroSection: { alignItems: 'center', backgroundColor: '#fff', padding: 30, borderRadius: 12, elevation: 3, marginBottom: 20, marginTop: 10 },
+  heroSection: { alignItems: 'center', backgroundColor: Colors.card, padding: 30, borderRadius: 12, elevation: 3, marginBottom: 20, marginTop: 10 },
   avatarPlaceholder: { width: 80, height: 80, borderRadius: 40, backgroundColor: Colors.primary, justifyContent: 'center', alignItems: 'center', marginBottom: 15 },
   avatarText: { fontSize: 36, color: '#fff', fontWeight: 'bold' },
   clubName: { fontSize: 24, fontWeight: 'bold', color: Colors.textPrimary, textAlign: 'center' },
   region: { fontSize: 14, color: Colors.textSecondary },
   verifyPill: { marginTop: 10, paddingHorizontal: 12, paddingVertical: 4, borderRadius: 12 },
-  verifiedBg: { backgroundColor: '#D1FAE5' },
-  provisionalBg: { backgroundColor: '#FEF3C7' },
+  verifiedBg: { backgroundColor: Colors.successBg },
+  provisionalBg: { backgroundColor: Colors.warnBg },
   verifyText: { fontSize: 11, fontWeight: 'bold' },
   sectionTitle: { fontSize: 16, fontWeight: 'bold', color: Colors.textPrimary, marginBottom: 12 },
   statsGrid: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 20 },
-  statCard: { flex: 0.48, backgroundColor: '#fff', padding: 20, borderRadius: 10, elevation: 2, alignItems: 'center' },
+  statCard: { flex: 0.48, backgroundColor: Colors.card, padding: 20, borderRadius: 10, elevation: 2, alignItems: 'center' },
   statNumber: { fontSize: 28, fontWeight: 'bold', color: Colors.primary, marginBottom: 5 },
   statLabel: { fontSize: 12, color: Colors.textSecondary, fontWeight: '600', textAlign: 'center' },
-  card: { ...CardSpec, padding: 16, marginBottom: 20 },
-  requestsCard: { borderWidth: 1, borderColor: '#FCD34D' },
+  card: { ...makeCardSpec(Colors), padding: 16, marginBottom: 20 },
+  requestsCard: { borderWidth: 1, borderColor: Colors.warnBorder },
   cardHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 },
   editBtn: { flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 10, paddingVertical: 4, borderRadius: 10, backgroundColor: Colors.primaryLight },
   editBtnText: { fontSize: 12, fontWeight: 'bold', color: Colors.primary },
   ownerNote: { fontSize: 11, color: Colors.textSecondary, fontStyle: 'italic', marginTop: 8 },
-  memberRow: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 8, borderTopWidth: 1, borderTopColor: '#F3F4F6' },
+  memberRow: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 8, borderTopWidth: 1, borderTopColor: Colors.surfaceMuted },
   memberName: { fontSize: 14, fontWeight: 'bold', color: Colors.textPrimary },
   memberMeta: { fontSize: 12, color: Colors.textSecondary, marginTop: 2 },
   memberBtn: { width: 34, height: 34, borderRadius: 17, alignItems: 'center', justifyContent: 'center' },
@@ -381,21 +386,21 @@ const styles = StyleSheet.create({
   declineBtn: { backgroundColor: Colors.danger },
   removeText: { fontSize: 12, fontWeight: 'bold', color: Colors.danger },
   approveText: { fontSize: 12, fontWeight: 'bold', color: Colors.primary },
-  verifiedWarning: { fontSize: 12, color: '#B45309', backgroundColor: '#FEF3C7', padding: 10, borderRadius: 8, marginBottom: 12, lineHeight: 17 },
+  verifiedWarning: { fontSize: 12, color: Colors.warnText, backgroundColor: Colors.warnBg, padding: 10, borderRadius: 8, marginBottom: 12, lineHeight: 17 },
   infoRow: { marginVertical: 6 },
   infoLabel: { fontSize: 12, fontWeight: 'bold', color: Colors.textSecondary },
   infoVal: { fontSize: 14, color: Colors.textPrimary, fontWeight: '600', marginTop: 2 },
   modalOverlay: { flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(0,0,0,0.5)' },
-  modalContent: { backgroundColor: '#fff', borderTopLeftRadius: 20, borderTopRightRadius: 20, padding: 20, maxHeight: '90%' },
+  modalContent: { backgroundColor: Colors.card, borderTopLeftRadius: 20, borderTopRightRadius: 20, padding: 20, maxHeight: '90%' },
   modalTitle: { fontSize: 18, fontWeight: 'bold', color: Colors.textPrimary, marginBottom: 12 },
-  input: { borderWidth: 1, borderColor: '#D1D5DB', borderRadius: 8, paddingHorizontal: 12, paddingVertical: 10, fontSize: 14, marginTop: 4, marginBottom: 12, color: Colors.textPrimary },
+  input: { borderWidth: 1, borderColor: Colors.borderStrong, borderRadius: 8, paddingHorizontal: 12, paddingVertical: 10, fontSize: 14, marginTop: 4, marginBottom: 12, color: Colors.textPrimary },
   chipRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 6, marginBottom: 12 },
-  chip: { paddingHorizontal: 12, paddingVertical: 8, borderRadius: 16, borderWidth: 1, borderColor: '#D1D5DB' },
+  chip: { paddingHorizontal: 12, paddingVertical: 8, borderRadius: 16, borderWidth: 1, borderColor: Colors.borderStrong },
   chipActive: { backgroundColor: Colors.primary, borderColor: Colors.primary },
   chipText: { fontSize: 12, color: Colors.textPrimary, fontWeight: '600' },
   chipTextActive: { color: '#fff' },
   modalActions: { flexDirection: 'row', gap: 10, marginTop: 8 },
-  cancelBtn: { flex: 1, alignItems: 'center', paddingVertical: 12, borderRadius: 10, borderWidth: 1, borderColor: '#D1D5DB' },
+  cancelBtn: { flex: 1, alignItems: 'center', paddingVertical: 12, borderRadius: 10, borderWidth: 1, borderColor: Colors.borderStrong },
   cancelBtnText: { fontWeight: 'bold', color: Colors.textSecondary },
   saveBtn: { flex: 1.4, alignItems: 'center', paddingVertical: 12, borderRadius: 10, backgroundColor: Colors.primary },
   saveBtnText: { fontWeight: 'bold', color: '#fff' },

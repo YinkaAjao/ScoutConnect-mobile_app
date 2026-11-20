@@ -1,5 +1,5 @@
 // src/components/ScoutAccreditationPanel.tsx
-import React, { useCallback, useState } from 'react';
+import React, { useCallback, useState, useMemo } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, TextInput, Alert, ActivityIndicator, ScrollView } from 'react-native';
 import { useFocusEffect } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
@@ -7,7 +7,7 @@ import DocumentAttachments from './DocumentAttachments';
 import { apiFetch } from '../lib/api';
 import { supabase } from '../lib/supabase';
 import { Attachment, uploadAttachments } from '../lib/verification';
-import { Colors, CardSpec } from '../constants/designSystem';
+import { useColors, makeCardSpec, type ThemeColors } from '../theme/theme';
 
 interface Accreditation {
   status: 'Pending' | 'Submitted' | 'Approved' | 'Rejected' | 'Suspended';
@@ -21,23 +21,23 @@ interface Accreditation {
   orgTypes: string[];
 }
 
-const STATUS_STYLE: Record<string, { label: string; bg: string; fg: string }> = {
-  Pending: { label: 'Not applied', bg: '#FEF3C7', fg: '#B45309' },
-  Submitted: { label: 'Under review', bg: '#DBEAFE', fg: '#1D4ED8' },
-  Approved: { label: 'Approved', bg: '#D1FAE5', fg: '#047857' },
-  Rejected: { label: 'Declined', bg: '#FEE2E2', fg: '#B91C1C' },
-  Suspended: { label: 'Suspended', bg: '#FEE2E2', fg: '#B91C1C' },
-};
+const statusStyle = (Colors: ThemeColors): Record<string, { label: string; bg: string; fg: string }> => ({
+  Pending: { label: 'Not applied', bg: Colors.warnBg, fg: Colors.warnText },
+  Submitted: { label: 'Under review', bg: Colors.infoBg, fg: Colors.infoText },
+  Approved: { label: 'Approved', bg: Colors.successBg, fg: Colors.successText },
+  Rejected: { label: 'Declined', bg: Colors.dangerBg, fg: Colors.dangerText },
+  Suspended: { label: 'Suspended', bg: Colors.dangerBg, fg: Colors.dangerText },
+});
 
 type IconName = React.ComponentProps<typeof Ionicons>['name'];
 
-const HERO: Record<string, { icon: IconName; bg: string; fg: string; title: string; body: string }> = {
-  Pending: { icon: 'shield-checkmark-outline', bg: '#DBEAFE', fg: Colors.secondary, title: 'Get accredited to start scouting', body: 'The athletes on ScoutConnect are young people, so only vetted scouts can browse them. It takes a few minutes to apply.' },
-  Submitted: { icon: 'hourglass-outline', bg: '#DBEAFE', fg: '#1D4ED8', title: 'Your application is being reviewed', body: 'An administrator is checking your details. You will get an email as soon as there is a decision.' },
-  Approved: { icon: 'checkmark-circle-outline', bg: '#D1FAE5', fg: '#047857', title: "You're accredited", body: 'You can now browse athletes, build a shortlist and contact clubs.' },
-  Rejected: { icon: 'alert-circle-outline', bg: '#FEE2E2', fg: '#B91C1C', title: 'Your application was not approved', body: 'You can fix the issue below and apply again.' },
-  Suspended: { icon: 'lock-closed-outline', bg: '#FEE2E2', fg: '#B91C1C', title: 'Your scout access is suspended', body: 'You cannot browse athletes while the suspension lasts.' },
-};
+const heroStyle = (Colors: ThemeColors): Record<string, { icon: IconName; bg: string; fg: string; title: string; body: string }> => ({
+  Pending: { icon: 'shield-checkmark-outline', bg: Colors.infoBg, fg: Colors.secondary, title: 'Get accredited to start scouting', body: 'The athletes on ScoutConnect are young people, so only vetted scouts can browse them. It takes a few minutes to apply.' },
+  Submitted: { icon: 'hourglass-outline', bg: Colors.infoBg, fg: Colors.infoText, title: 'Your application is being reviewed', body: 'An administrator is checking your details. You will get an email as soon as there is a decision.' },
+  Approved: { icon: 'checkmark-circle-outline', bg: Colors.successBg, fg: Colors.successText, title: "You're accredited", body: 'You can now browse athletes, build a shortlist and contact clubs.' },
+  Rejected: { icon: 'alert-circle-outline', bg: Colors.dangerBg, fg: Colors.dangerText, title: 'Your application was not approved', body: 'You can fix the issue below and apply again.' },
+  Suspended: { icon: 'lock-closed-outline', bg: Colors.dangerBg, fg: Colors.dangerText, title: 'Your scout access is suspended', body: 'You cannot browse athletes while the suspension lasts.' },
+});
 
 const STEPS = [
   { title: 'Tell us who you scout for', body: 'Your organisation and what kind of scout you are.' },
@@ -51,6 +51,8 @@ const STEPS = [
  * It fills the whole screen, so callers should not put their own page title above it.
  */
 export default function ScoutAccreditationPanel({ onApproved }: { onApproved?: () => void }) {
+  const Colors = useColors();
+  const styles = useMemo(() => makeStyles(Colors), [Colors]);
   const [info, setInfo] = useState<Accreditation | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [organisation, setOrganisation] = useState('');
@@ -101,7 +103,7 @@ export default function ScoutAccreditationPanel({ onApproved }: { onApproved?: (
       await load();
       Alert.alert('Application sent', 'An administrator will review it. You will get an email when there is a decision.');
     } catch (e: any) {
-      Alert.alert('Could not send your application', e?.message || String(e));
+      Alert.alert('Could not send your application', e?.message || 'Please try again.');
     } finally {
       setSubmitting(false);
     }
@@ -118,9 +120,9 @@ export default function ScoutAccreditationPanel({ onApproved }: { onApproved?: (
     );
   }
 
-  const style = STATUS_STYLE[info.status] ?? STATUS_STYLE.Pending;
+  const style = statusStyle(Colors)[info.status] ?? statusStyle(Colors).Pending;
   const canApply = info.status === 'Pending' || info.status === 'Rejected';
-  const hero = HERO[info.status] ?? HERO.Pending;
+  const hero = heroStyle(Colors)[info.status] ?? heroStyle(Colors).Pending;
 
   return (
     <ScrollView style={styles.screen} contentContainerStyle={styles.container} keyboardShouldPersistTaps="handled">
@@ -232,7 +234,7 @@ export default function ScoutAccreditationPanel({ onApproved }: { onApproved?: (
   );
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (Colors: ThemeColors) => StyleSheet.create({
   screen: { flex: 1 },
   container: { padding: 15, paddingBottom: 40 },
   center: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 24, gap: 8 },
@@ -246,16 +248,16 @@ const styles = StyleSheet.create({
   stepNumberText: { color: '#fff', fontWeight: 'bold', fontSize: 13 },
   stepTitle: { fontSize: 14, fontWeight: 'bold', color: Colors.textPrimary },
   stepBody: { fontSize: 12, color: Colors.textSecondary, lineHeight: 17, marginTop: 1 },
-  section: { ...CardSpec, padding: 16, marginBottom: 14 },
+  section: { ...makeCardSpec(Colors), padding: 16, marginBottom: 14 },
   sectionTitle: { fontSize: 15, fontWeight: 'bold', color: Colors.textPrimary, marginBottom: 10 },
   summaryLine: { fontSize: 13, color: Colors.textSecondary, marginBottom: 4 },
   summaryValue: { color: Colors.textPrimary, fontWeight: '600' },
   pill: { paddingHorizontal: 10, paddingVertical: 4, borderRadius: 12 },
   pillText: { fontSize: 11, fontWeight: 'bold' },
   label: { fontSize: 12, fontWeight: 'bold', color: Colors.textSecondary, marginTop: 4 },
-  input: { borderWidth: 1, borderColor: '#D1D5DB', borderRadius: 8, paddingHorizontal: 12, paddingVertical: 10, fontSize: 14, marginTop: 4, marginBottom: 12, color: Colors.textPrimary },
+  input: { borderWidth: 1, borderColor: Colors.borderStrong, borderRadius: 8, paddingHorizontal: 12, paddingVertical: 10, fontSize: 14, marginTop: 4, marginBottom: 12, color: Colors.textPrimary },
   chipRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 6, marginBottom: 12 },
-  chip: { paddingHorizontal: 12, paddingVertical: 8, borderRadius: 16, borderWidth: 1, borderColor: '#D1D5DB' },
+  chip: { paddingHorizontal: 12, paddingVertical: 8, borderRadius: 16, borderWidth: 1, borderColor: Colors.borderStrong },
   chipActive: { backgroundColor: Colors.secondary, borderColor: Colors.secondary },
   chipText: { fontSize: 12, color: Colors.textPrimary, fontWeight: '600' },
   chipTextActive: { color: '#fff' },
@@ -263,9 +265,9 @@ const styles = StyleSheet.create({
   primaryText: { color: '#fff', fontWeight: 'bold' },
   secondaryBtn: { alignSelf: 'flex-start', marginTop: 10, borderWidth: 1, borderColor: Colors.secondaryBorder, paddingHorizontal: 16, paddingVertical: 9, borderRadius: 10 },
   secondaryText: { color: Colors.secondary, fontWeight: 'bold' },
-  rejectBox: { backgroundColor: '#FEF2F2', borderRadius: 10, padding: 12, marginBottom: 14, borderWidth: 1, borderColor: '#FECACA' },
-  rejectTitle: { fontSize: 12, fontWeight: 'bold', color: '#B91C1C', marginBottom: 2 },
-  rejectText: { fontSize: 13, color: '#7F1D1D', lineHeight: 18 },
+  rejectBox: { backgroundColor: Colors.dangerBg, borderRadius: 10, padding: 12, marginBottom: 14, borderWidth: 1, borderColor: Colors.dangerBorder },
+  rejectTitle: { fontSize: 12, fontWeight: 'bold', color: Colors.dangerText, marginBottom: 2 },
+  rejectText: { fontSize: 13, color: Colors.dangerText, lineHeight: 18 },
   errorText: { color: Colors.danger, fontSize: 13, textAlign: 'center' },
   link: { color: Colors.secondary, fontWeight: 'bold' },
 });

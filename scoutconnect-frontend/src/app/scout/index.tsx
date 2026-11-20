@@ -1,5 +1,6 @@
 // src/app/scout/index.tsx
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import ModalBackdrop from '../../components/ModalBackdrop';
 import { router, useFocusEffect } from 'expo-router';
 import { View, Text, FlatList, StyleSheet, TextInput, TouchableOpacity, RefreshControl, ActivityIndicator, Modal, ScrollView, Switch } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -12,7 +13,7 @@ import {
   activeChips, needsClientFilter, passesClientFilters, serverQuery,
 } from '../../lib/discoverFilters';
 import { Ionicons } from '@expo/vector-icons';
-import { Colors } from '../../constants/designSystem';
+import { useColors, useSheetPad, type ThemeColors } from '../../theme/theme';
 
 const PAGE_SIZE = 10;
 
@@ -21,6 +22,8 @@ const EVAL_TYPES = ['All', 'Checklist', 'Combine', 'Match'];
 
 /** A row of single-choice chips. */
 function ChipGroup<T extends string | number | null>({ options, value, onChange }: { options: { value: T; label: string }[]; value: T; onChange: (value: T) => void }) {
+  const Colors = useColors();
+  const styles = useMemo(() => makeStyles(Colors), [Colors]);
   return (
     <View style={styles.dropdownGrid}>
       {options.map((option) => {
@@ -42,6 +45,9 @@ function ChipGroup<T extends string | number | null>({ options, value, onChange 
 }
 
 export default function ScoutDiscoverScreen() {
+  const Colors = useColors();
+  const styles = useMemo(() => makeStyles(Colors), [Colors]);
+  const sheetPad = useSheetPad();
   const [players, setPlayers] = useState<PlayerProspect[]>([]);
   const [page, setPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
@@ -253,9 +259,10 @@ export default function ScoutDiscoverScreen() {
         ListFooterComponent={loadingMore ? <ActivityIndicator size="small" color={Colors.secondary} style={{ marginVertical: 15 }} /> : null}
       />
 
-      <Modal visible={showFilterModal} animationType="slide" transparent={true} onRequestClose={() => setShowFilterModal(false)}>
+      <Modal statusBarTranslucent navigationBarTranslucent visible={showFilterModal} animationType="slide" transparent={true} onRequestClose={() => setShowFilterModal(false)}>
         <View style={styles.modalOverlay}>
-          <View style={styles.modalContent}>
+          <ModalBackdrop onPress={() => setShowFilterModal(false)} />
+          <View style={[styles.modalContent, sheetPad]}>
             <View style={styles.modalHeaderRow}>
               <Text style={styles.modalTitle}>Filter & sort</Text>
               <TouchableOpacity onPress={() => setShowFilterModal(false)} accessibilityRole="button" accessibilityLabel="Close filters">
@@ -327,16 +334,16 @@ export default function ScoutDiscoverScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (Colors: ThemeColors) => StyleSheet.create({
   container: { flex: 1, backgroundColor: Colors.canvas, padding: 15 },
   topBanner: { backgroundColor: Colors.warningBg, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 12, paddingVertical: 8, borderRadius: 8, marginBottom: 12 },
   topBannerText: { color: Colors.warningText, fontWeight: 'bold', fontSize: 11 },
   header: { fontSize: 24, fontWeight: 'bold', color: Colors.textPrimary, marginBottom: 10 },
 
   searchFilterToolbar: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 12 },
-  searchContainer: { flex: 1, flexDirection: 'row', alignItems: 'center', backgroundColor: '#FFF', paddingHorizontal: 12, borderRadius: 8, borderWidth: 1, borderColor: Colors.border },
+  searchContainer: { flex: 1, flexDirection: 'row', alignItems: 'center', backgroundColor: Colors.card, paddingHorizontal: 12, borderRadius: 8, borderWidth: 1, borderColor: Colors.border },
   searchInput: { flex: 1, paddingVertical: 10, fontSize: 14, color: Colors.textPrimary },
-  filterToggleBtn: { width: 44, height: 44, borderRadius: 8, backgroundColor: '#FFF', borderWidth: 1, borderColor: Colors.border, justifyContent: 'center', alignItems: 'center' },
+  filterToggleBtn: { width: 44, height: 44, borderRadius: 8, backgroundColor: Colors.card, borderWidth: 1, borderColor: Colors.border, justifyContent: 'center', alignItems: 'center' },
   filterToggleBtnActive: { backgroundColor: Colors.secondary, borderColor: Colors.secondary },
   filterBadge: { position: 'absolute', top: -4, right: -4, backgroundColor: Colors.primary, width: 16, height: 16, borderRadius: 8, justifyContent: 'center', alignItems: 'center' },
   filterBadgeText: { color: '#FFF', fontSize: 9, fontWeight: 'bold' },
@@ -356,20 +363,20 @@ const styles = StyleSheet.create({
   retryText: { color: '#fff', fontWeight: 'bold' },
 
   modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' },
-  modalContent: { backgroundColor: '#FFF', borderTopLeftRadius: 20, borderTopRightRadius: 20, padding: 20, maxHeight: '88%' },
+  modalContent: { backgroundColor: Colors.card, borderTopLeftRadius: 20, borderTopRightRadius: 20, padding: 20, maxHeight: '88%' },
   modalHeaderRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 },
   modalTitle: { fontSize: 18, fontWeight: 'bold', color: Colors.textPrimary },
-  sectionHeading: { fontSize: 14, fontWeight: 'bold', color: Colors.textPrimary, marginTop: 22, paddingBottom: 4, borderBottomWidth: 1, borderBottomColor: '#F3F4F6' },
-  switchRow: { flexDirection: 'row', alignItems: 'center', marginTop: 14, paddingVertical: 10, borderTopWidth: 1, borderBottomWidth: 1, borderColor: '#F3F4F6' },
+  sectionHeading: { fontSize: 14, fontWeight: 'bold', color: Colors.textPrimary, marginTop: 22, paddingBottom: 4, borderBottomWidth: 1, borderBottomColor: Colors.surfaceMuted },
+  switchRow: { flexDirection: 'row', alignItems: 'center', marginTop: 14, paddingVertical: 10, borderTopWidth: 1, borderBottomWidth: 1, borderColor: Colors.surfaceMuted },
   switchHint: { fontSize: 12, color: Colors.textSecondary, lineHeight: 17 },
   filterLabel: { fontSize: 12, fontWeight: 'bold', color: Colors.textSecondary, marginTop: 12, marginBottom: 6 },
   dropdownGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 6 },
-  dropdownOption: { paddingVertical: 6, paddingHorizontal: 12, borderRadius: 6, backgroundColor: '#F3F4F6', borderWidth: 1, borderColor: Colors.border },
+  dropdownOption: { paddingVertical: 6, paddingHorizontal: 12, borderRadius: 6, backgroundColor: Colors.surfaceMuted, borderWidth: 1, borderColor: Colors.border },
   dropdownOptionActive: { backgroundColor: Colors.secondary, borderColor: Colors.secondary },
   dropdownOptionText: { fontSize: 12, fontWeight: '600', color: Colors.textSecondary },
   dropdownOptionTextActive: { color: '#FFF' },
   modalFooterRow: { flexDirection: 'row', gap: 10, marginTop: 14 },
-  modalResetBtn: { flex: 1, padding: 12, backgroundColor: '#E5E7EB', borderRadius: 8, alignItems: 'center' },
+  modalResetBtn: { flex: 1, padding: 12, backgroundColor: Colors.border, borderRadius: 8, alignItems: 'center' },
   modalResetText: { color: Colors.textPrimary, fontWeight: 'bold', fontSize: 14 },
   modalApplyBtn: { flex: 1.4, padding: 12, backgroundColor: Colors.secondary, borderRadius: 8, alignItems: 'center' },
   modalApplyText: { color: '#FFF', fontWeight: 'bold', fontSize: 14 },

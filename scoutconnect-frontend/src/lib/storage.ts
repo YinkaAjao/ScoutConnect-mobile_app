@@ -21,7 +21,10 @@ export async function uploadAthletePhoto(record: { userId: string; clientId: str
     contentType: 'image/jpeg',
     upsert: true,
   });
-  if (error) throw new Error(`Photo upload failed: ${error.message}`);
+  if (error) {
+    console.warn('Photo upload failed:', error.message);
+    throw new Error('We could not upload the photo. Check your connection and that the image is not too large, then try again.');
+  }
 
   return path;
 }

@@ -1,5 +1,6 @@
 // src/app/coach/profile.tsx
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useMemo } from 'react';
+import ModalBackdrop from '../../components/ModalBackdrop';
 import { View, Text, TouchableOpacity, StyleSheet, ScrollView, ActivityIndicator, Alert, Modal, TextInput } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
@@ -7,8 +8,9 @@ import * as SecureStore from 'expo-secure-store';
 import { Ionicons } from '@expo/vector-icons';
 import { supabase } from '../../lib/supabase';
 import { apiFetch } from '../../lib/api';
-import { Colors, CardSpec } from '../../constants/designSystem';
 import { verificationLabel } from '../../lib/verification';
+import AccountSecurity from '../../components/AccountSecurity';
+import AppearanceToggle from '../../components/AppearanceToggle';
 import { 
   initDB, 
   getDraftEvaluations, 
@@ -16,6 +18,7 @@ import {
   getUnsyncedMatchStats, 
   getUnsyncedAchievements 
 } from '../../../database';
+import { useColors, makeCardSpec, useSheetPad, type ThemeColors } from '../../theme/theme';
 
 
 interface ClubInfo {
@@ -32,6 +35,9 @@ interface ClubInfo {
 }
 
 export default function CoachProfileScreen() {
+  const Colors = useColors();
+  const styles = useMemo(() => makeStyles(Colors), [Colors]);
+  const sheetPad = useSheetPad();
   const router = useRouter();
 
   const [club, setClub] = useState<ClubInfo | null>(null);
@@ -106,7 +112,7 @@ export default function CoachProfileScreen() {
       setCoachPhone(data.user.phone || '');
       setEditingProfile(false);
     } catch (error: any) {
-      Alert.alert('Could not save changes', error?.message || String(error));
+      Alert.alert('Could not save changes', error?.message || 'Please try again.');
     } finally {
       setSavingProfile(false);
     }
@@ -278,12 +284,22 @@ export default function CoachProfileScreen() {
           </TouchableOpacity>
         </View>
 
+        <AppearanceToggle />
+
+        {coachEmail ? (
+          <AccountSecurity
+            email={coachEmail}
+            deleteSummary="This removes your name, email, phone and sign-in. Athlete records belong to your academy, so they stay with it. If you are its only owner, you must remove those records first."
+          />
+        ) : null}
+
       </ScrollView>
 
       {/* Modal for Account Settings / Support */}
-      <Modal visible={activeModal !== null} animationType="slide" transparent={true}>
+      <Modal statusBarTranslucent navigationBarTranslucent visible={activeModal !== null} animationType="slide" transparent={true}>
         <View style={styles.modalOverlay}>
-          <View style={styles.modalContent}>
+          <ModalBackdrop onPress={() => setActiveModal(null)} />
+          <View style={[styles.modalContent, sheetPad]}>
             {activeModal === 'account' ? (
               <>
                 <View style={styles.rowCenter}>
@@ -370,19 +386,19 @@ export default function CoachProfileScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (Colors: ThemeColors) => StyleSheet.create({
   container: { flex: 1, backgroundColor: Colors.canvas, paddingHorizontal: 15, paddingTop: 10 },
-  editInput: { borderWidth: 1, borderColor: '#D1D5DB', borderRadius: 8, paddingHorizontal: 12, paddingVertical: 8, fontSize: 14, marginTop: 4, marginBottom: 10, color: Colors.textPrimary },
+  editInput: { borderWidth: 1, borderColor: Colors.borderStrong, borderRadius: 8, paddingHorizontal: 12, paddingVertical: 8, fontSize: 14, marginTop: 4, marginBottom: 10, color: Colors.textPrimary },
   rowCenter: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   topBanner: { backgroundColor: Colors.warningBg, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 12, paddingVertical: 8, borderRadius: 8, marginBottom: 12 },
   topBannerText: { color: Colors.warningText, fontWeight: 'bold', fontSize: 10 },
-  refreshPill: { flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: '#FFF', paddingHorizontal: 8, paddingVertical: 3, borderRadius: 10 },
+  refreshPill: { flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: Colors.card, paddingHorizontal: 8, paddingVertical: 3, borderRadius: 10 },
   refreshPillText: { color: Colors.warningText, fontSize: 10, fontWeight: 'bold' },
   header: { fontSize: 24, fontWeight: 'bold', marginBottom: 14, color: Colors.textPrimary },
   
   heroCard: { backgroundColor: Colors.primary, borderRadius: 14, padding: 18, marginBottom: 15, elevation: 3 },
   heroTopRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 16 },
-  avatarCircle: { width: 54, height: 54, borderRadius: 27, backgroundColor: Colors.primaryDark, justifyContent: 'center', alignItems: 'center', borderWidth: 2, borderColor: '#A7F3D0' },
+  avatarCircle: { width: 54, height: 54, borderRadius: 27, backgroundColor: Colors.primaryDark, justifyContent: 'center', alignItems: 'center', borderWidth: 2, borderColor: Colors.successBorder },
   heroTitle: { fontSize: 18, fontWeight: 'bold', color: '#FFF' },
   heroSubtitle: { fontSize: 12, color: '#A7F3D0', marginTop: 2 },
   roleBadge: { backgroundColor: 'rgba(255,255,255,0.2)', paddingHorizontal: 10, paddingVertical: 4, borderRadius: 10 },
@@ -393,23 +409,23 @@ const styles = StyleSheet.create({
   heroMetricVal: { color: '#FFF', fontSize: 16, fontWeight: 'bold' },
   heroMetricLabel: { color: '#A7F3D0', fontSize: 11, marginTop: 2 },
 
-  card: { ...CardSpec, padding: 16, marginBottom: 15 },
+  card: { ...makeCardSpec(Colors), padding: 16, marginBottom: 15 },
   cardHeaderRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 },
   sectionTitle: { fontSize: 15, fontWeight: 'bold', color: Colors.textPrimary },
   sectionDesc: { fontSize: 12, color: Colors.textSecondary, lineHeight: 18 },
   statusPill: { paddingHorizontal: 8, paddingVertical: 3, borderRadius: 6 },
   statusGood: { backgroundColor: Colors.primaryLight },
-  statusPenalized: { backgroundColor: '#FEE2E2' },
+  statusPenalized: { backgroundColor: Colors.dangerBg },
   statusPillText: { fontSize: 10, fontWeight: 'bold' },
 
   storageGrid: { flexDirection: 'row', gap: 10, marginVertical: 10 },
-  storageBox: { flex: 1, backgroundColor: '#F9FAFB', borderWidth: 1, borderColor: Colors.border, borderRadius: 10, padding: 12, alignItems: 'center' },
+  storageBox: { flex: 1, backgroundColor: Colors.inputBg, borderWidth: 1, borderColor: Colors.border, borderRadius: 10, padding: 12, alignItems: 'center' },
   storageCount: { fontSize: 20, fontWeight: 'bold', color: Colors.textPrimary, marginTop: 4 },
   storageLabel: { fontSize: 11, color: Colors.textSecondary, marginTop: 2 },
   actionOutlineBtn: { flexDirection: 'row', justifyContent: 'center', alignItems: 'center', gap: 6, paddingVertical: 10, borderRadius: 8, backgroundColor: Colors.primaryLight, marginTop: 4 },
   actionOutlineText: { color: Colors.primary, fontWeight: 'bold', fontSize: 13 },
 
-  menuCard: { ...CardSpec, padding: 12 },
+  menuCard: { ...makeCardSpec(Colors), padding: 12 },
   menuRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 10, paddingHorizontal: 4 },
   menuIconBox: { width: 36, height: 36, borderRadius: 8, justifyContent: 'center', alignItems: 'center', marginRight: 4 },
   menuItemTitle: { fontSize: 14, fontWeight: 'bold', color: Colors.textPrimary },
@@ -419,7 +435,7 @@ const styles = StyleSheet.create({
   logoutText: { color: Colors.danger, fontSize: 15, fontWeight: 'bold' },
 
   modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' },
-  modalContent: { backgroundColor: '#FFF', borderTopLeftRadius: 20, borderTopRightRadius: 20, padding: 20 },
+  modalContent: { backgroundColor: Colors.card, borderTopLeftRadius: 20, borderTopRightRadius: 20, padding: 20 },
   modalTitle: { fontSize: 17, fontWeight: 'bold', color: Colors.textPrimary },
   infoList: { marginVertical: 14 },
   infoLabel: { fontSize: 11, fontWeight: 'bold', color: Colors.textSecondary, marginTop: 10 },

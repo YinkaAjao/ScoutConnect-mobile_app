@@ -1,12 +1,12 @@
 // src/components/ScoutRequestsCard.tsx
-import React, { useCallback, useState } from 'react';
+import React, { useCallback, useState, useMemo } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, TextInput, Alert, ActivityIndicator } from 'react-native';
 import { useFocusEffect } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
-import FormSheet, { formStyles } from './FormSheet';
+import FormSheet, { useFormStyles } from './FormSheet';
 import { apiFetch } from '../lib/api';
 import { setPendingContactRequests } from '../lib/verificationSeen';
-import { Colors, CardSpec } from '../constants/designSystem';
+import { useColors, makeCardSpec, type ThemeColors } from '../theme/theme';
 
 interface IncomingRequest {
   id: string;
@@ -18,6 +18,9 @@ interface IncomingRequest {
 
 /** Scout contact requests waiting for the club owner. Accepting is what releases the athlete's name and the club's contact details. */
 export default function ScoutRequestsCard() {
+  const formStyles = useFormStyles();
+  const Colors = useColors();
+  const styles = useMemo(() => makeStyles(Colors), [Colors]);
   const [requests, setRequests] = useState<IncomingRequest[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [answering, setAnswering] = useState<{ request: IncomingRequest; decision: 'accept' | 'decline' } | null>(null);
@@ -59,7 +62,7 @@ export default function ScoutRequestsCard() {
       setPendingContactRequests(remaining.length);
       setAnswering(null);
     } catch (e: any) {
-      Alert.alert('Could not send your answer', e?.message || String(e));
+      Alert.alert('Could not send your answer', e?.message || 'Please try again.');
     } finally {
       setSaving(false);
     }
@@ -142,16 +145,16 @@ export default function ScoutRequestsCard() {
   );
 }
 
-const styles = StyleSheet.create({
-  card: { ...CardSpec, padding: 16, marginBottom: 20 },
-  cardAttention: { borderWidth: 1, borderColor: '#FCD34D' },
+const makeStyles = (Colors: ThemeColors) => StyleSheet.create({
+  card: { ...makeCardSpec(Colors), padding: 16, marginBottom: 20 },
+  cardAttention: { borderWidth: 1, borderColor: Colors.warnBorder },
   center: { alignItems: 'center', justifyContent: 'center', minHeight: 70, gap: 8 },
   header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 },
   title: { fontSize: 16, fontWeight: 'bold', color: Colors.textPrimary },
-  countPill: { backgroundColor: '#FEF3C7', paddingHorizontal: 10, paddingVertical: 4, borderRadius: 12 },
-  countText: { fontSize: 11, fontWeight: 'bold', color: '#B45309' },
+  countPill: { backgroundColor: Colors.warnBg, paddingHorizontal: 10, paddingVertical: 4, borderRadius: 12 },
+  countText: { fontSize: 11, fontWeight: 'bold', color: Colors.warnText },
   empty: { fontSize: 13, color: Colors.textSecondary, lineHeight: 19 },
-  item: { borderTopWidth: 1, borderTopColor: '#F3F4F6', paddingTop: 12, marginTop: 8 },
+  item: { borderTopWidth: 1, borderTopColor: Colors.surfaceMuted, paddingTop: 12, marginTop: 8 },
   athlete: { fontSize: 15, fontWeight: 'bold', color: Colors.textPrimary },
   scout: { fontSize: 12, color: Colors.textSecondary, marginTop: 2 },
   message: { fontSize: 13, color: Colors.textPrimary, fontStyle: 'italic', marginTop: 8, lineHeight: 19 },
@@ -160,9 +163,9 @@ const styles = StyleSheet.create({
   btn: { flex: 1, alignItems: 'center', paddingVertical: 11, borderRadius: 10 },
   acceptBtn: { backgroundColor: Colors.primary },
   acceptText: { color: '#fff', fontWeight: 'bold' },
-  declineBtn: { borderWidth: 1, borderColor: '#FCA5A5', backgroundColor: '#FEF2F2' },
-  declineText: { color: '#B91C1C', fontWeight: 'bold' },
+  declineBtn: { borderWidth: 1, borderColor: Colors.dangerBorder, backgroundColor: Colors.dangerBg },
+  declineText: { color: Colors.dangerText, fontWeight: 'bold' },
   errorText: { color: Colors.danger, fontSize: 13, textAlign: 'center' },
   link: { color: Colors.secondary, fontWeight: 'bold' },
-  sheetWarning: { fontSize: 13, color: Colors.textPrimary, lineHeight: 19, backgroundColor: '#F9FAFB', padding: 12, borderRadius: 8, marginBottom: 12 },
+  sheetWarning: { fontSize: 13, color: Colors.textPrimary, lineHeight: 19, backgroundColor: Colors.inputBg, padding: 12, borderRadius: 8, marginBottom: 12 },
 });

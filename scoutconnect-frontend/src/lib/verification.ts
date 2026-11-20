@@ -42,14 +42,20 @@ export async function uploadVerificationDocument(userId: string, uri: string, fi
     contentType: contentTypeFor(storedName),
     upsert: false,
   });
-  if (error) throw new Error(`Could not upload ${fileName}: ${error.message}`);
+  if (error) {
+    console.warn('Document upload failed:', error.message);
+    throw new Error(`We could not upload ${fileName}. Check your connection and that the file is not too large, then try again.`);
+  }
   return path;
 }
 
 /** Short-lived link a reviewer can open; only works for admins (and the file's owner) under the bucket policies. */
 export async function getDocumentUrl(path: string): Promise<string> {
   const { data, error } = await supabase.storage.from(VERIFICATION_BUCKET).createSignedUrl(path, 300);
-  if (error || !data?.signedUrl) throw new Error(error?.message || 'Could not open this document.');
+  if (error || !data?.signedUrl) {
+    console.warn('Signed URL failed:', error?.message);
+    throw new Error('We could not open this document. It may have been removed, or you may not have permission to view it.');
+  }
   return data.signedUrl;
 }
 

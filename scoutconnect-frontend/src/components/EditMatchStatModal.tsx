@@ -1,7 +1,7 @@
 // src/components/EditMatchStatModal.tsx
 import React, { useEffect, useState } from 'react';
 import { Text, TextInput, Alert } from 'react-native';
-import FormSheet, { formStyles } from './FormSheet';
+import FormSheet, { useFormStyles } from './FormSheet';
 import { apiFetch } from '../lib/api';
 import { isValidDob } from '../lib/text';
 
@@ -23,6 +23,7 @@ interface Props {
 }
 
 export default function EditMatchStatModal({ stat, onClose, onSaved }: Props) {
+  const formStyles = useFormStyles();
   const [form, setForm] = useState({ competition: '', opponent: '', matchResult: '', matchDate: '', goals: '0', assists: '0', minutesPlayed: '0' });
   const [saving, setSaving] = useState(false);
 
@@ -59,7 +60,7 @@ export default function EditMatchStatModal({ stat, onClose, onSaved }: Props) {
       });
       onSaved(data.matchStat);
     } catch (error: any) {
-      Alert.alert('Could not save changes', error?.message || String(error));
+      Alert.alert('Could not save changes', error?.message || 'Please try again.');
     } finally {
       setSaving(false);
     }
@@ -87,6 +88,7 @@ export default function EditMatchStatModal({ stat, onClose, onSaved }: Props) {
 }
 
 function TextInputRow({ form, set }: { form: { goals: string; assists: string; minutesPlayed: string }; set: (k: 'goals' | 'assists' | 'minutesPlayed') => (v: string) => void }) {
+  const formStyles = useFormStyles();
   return (
     <>
       <Text style={formStyles.label}>Goals</Text>

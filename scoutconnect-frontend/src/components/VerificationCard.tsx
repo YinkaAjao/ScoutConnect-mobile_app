@@ -1,27 +1,30 @@
 // src/components/VerificationCard.tsx
-import React, { useCallback, useState } from 'react';
+import React, { useCallback, useState, useMemo } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, TextInput, Alert, ActivityIndicator } from 'react-native';
 import { useFocusEffect } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
-import FormSheet, { formStyles } from './FormSheet';
+import FormSheet, { useFormStyles } from './FormSheet';
 import DocumentAttachments from './DocumentAttachments';
 import { apiFetch } from '../lib/api';
 import { supabase } from '../lib/supabase';
 import { markVerificationSeen } from '../lib/verificationSeen';
 import { Attachment, VerificationInfo, uploadAttachments } from '../lib/verification';
-import { Colors, CardSpec } from '../constants/designSystem';
+import { useColors, makeCardSpec, type ThemeColors } from '../theme/theme';
 
-const STATUS_STYLE: Record<string, { label: string; bg: string; fg: string }> = {
-  Verified: { label: 'Verified', bg: '#D1FAE5', fg: '#047857' },
-  Submitted: { label: 'Under Review', bg: '#DBEAFE', fg: '#1D4ED8' },
-  Rejected: { label: 'Declined', bg: '#FEE2E2', fg: '#B91C1C' },
-  Unverified: { label: 'Not Verified', bg: '#FEF3C7', fg: '#B45309' },
-};
+const statusStyle = (Colors: ThemeColors): Record<string, { label: string; bg: string; fg: string }> => ({
+  Verified: { label: 'Verified', bg: Colors.successBg, fg: Colors.successText },
+  Submitted: { label: 'Under Review', bg: Colors.infoBg, fg: Colors.infoText },
+  Rejected: { label: 'Declined', bg: Colors.dangerBg, fg: Colors.dangerText },
+  Unverified: { label: 'Not Verified', bg: Colors.warnBg, fg: Colors.warnText },
+});
 
 const formatDate = (iso?: string | null) => (iso ? new Date(iso).toLocaleDateString() : '');
 
 /** Verification status for the signed-in coach's club, with the request flow for the club owner. */
 export default function VerificationCard({ refreshKey = 0 }: { refreshKey?: number }) {
+  const formStyles = useFormStyles();
+  const Colors = useColors();
+  const styles = useMemo(() => makeStyles(Colors), [Colors]);
   const [info, setInfo] = useState<VerificationInfo | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [requesting, setRequesting] = useState(false);
@@ -66,7 +69,7 @@ export default function VerificationCard({ refreshKey = 0 }: { refreshKey?: numb
       await load();
       Alert.alert('Request sent', 'An administrator will review your documents. You can follow the status here.');
     } catch (e: any) {
-      Alert.alert('Could not send your request', e?.message || String(e));
+      Alert.alert('Could not send your request', e?.message || 'Please try again.');
     } finally {
       setSubmitting(false);
     }
@@ -83,7 +86,7 @@ export default function VerificationCard({ refreshKey = 0 }: { refreshKey?: numb
     );
   }
 
-  const style = STATUS_STYLE[info.status] ?? STATUS_STYLE.Unverified;
+  const style = statusStyle(Colors)[info.status] ?? statusStyle(Colors).Unverified;
   const canResubmit = info.status === 'Rejected' || info.status === 'Unverified';
 
   return (
@@ -171,8 +174,8 @@ export default function VerificationCard({ refreshKey = 0 }: { refreshKey?: numb
   );
 }
 
-const styles = StyleSheet.create({
-  card: { ...CardSpec, padding: 16, marginBottom: 20 },
+const makeStyles = (Colors: ThemeColors) => StyleSheet.create({
+  card: { ...makeCardSpec(Colors), padding: 16, marginBottom: 20 },
   center: { alignItems: 'center', justifyContent: 'center', minHeight: 80, gap: 8 },
   header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 },
   title: { fontSize: 16, fontWeight: 'bold', color: Colors.textPrimary },
@@ -185,10 +188,10 @@ const styles = StyleSheet.create({
   primaryBtnDisabled: { backgroundColor: '#9CA3AF' },
   primaryBtnText: { color: '#fff', fontWeight: 'bold' },
   note: { fontSize: 11, color: Colors.textSecondary, fontStyle: 'italic', marginTop: 8 },
-  rejectBox: { backgroundColor: '#FEF2F2', borderRadius: 8, padding: 12, marginBottom: 10, borderWidth: 1, borderColor: '#FECACA' },
-  rejectTitle: { fontSize: 12, fontWeight: 'bold', color: '#B91C1C', marginBottom: 2 },
-  rejectText: { fontSize: 13, color: '#7F1D1D', lineHeight: 18 },
-  history: { marginTop: 14, paddingTop: 10, borderTopWidth: 1, borderTopColor: '#F3F4F6' },
+  rejectBox: { backgroundColor: Colors.dangerBg, borderRadius: 8, padding: 12, marginBottom: 10, borderWidth: 1, borderColor: Colors.dangerBorder },
+  rejectTitle: { fontSize: 12, fontWeight: 'bold', color: Colors.dangerText, marginBottom: 2 },
+  rejectText: { fontSize: 13, color: Colors.dangerText, lineHeight: 18 },
+  history: { marginTop: 14, paddingTop: 10, borderTopWidth: 1, borderTopColor: Colors.surfaceMuted },
   historyTitle: { fontSize: 10, fontWeight: 'bold', color: '#9CA3AF', marginBottom: 4 },
   historyRow: { fontSize: 12, color: Colors.textSecondary, paddingVertical: 1 },
   errorText: { color: Colors.danger, fontSize: 13, textAlign: 'center' },

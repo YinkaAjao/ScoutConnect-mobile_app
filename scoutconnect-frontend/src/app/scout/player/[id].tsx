@@ -1,24 +1,27 @@
 // src/app/scout/player/[id].tsx
-import React, { useCallback, useState } from 'react';
+import React, { useCallback, useState, useMemo } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, TextInput, Alert, Dimensions, Image, ActivityIndicator, ScrollView } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useFocusEffect, useLocalSearchParams } from 'expo-router';
 import { LineChart, ProgressChart } from 'react-native-chart-kit';
 import { Ionicons } from '@expo/vector-icons';
 import { apiFetch } from '../../../lib/api';
-import FormSheet, { formStyles } from '../../../components/FormSheet';
+import FormSheet, { useFormStyles } from '../../../components/FormSheet';
 import { pillarScores } from '../../../lib/ratings';
 import { shareReportPdf } from '../../../lib/reportExport';
 import { PlayerProspect, Evaluation, MatchStat, Achievement, latestOverall, positionAgeLine, matchTotals, latestBody, overallTrend, daysSinceLastEvaluation, outOfFive } from '../../../lib/scoutPlayer';
-import { Colors, CardSpec } from '../../../constants/designSystem';
+import { useColors, makeCardSpec, type ThemeColors } from '../../../theme/theme';
 
 // One distinct colour per rating, used by the rings and the bars so they read together.
-const PILLAR_COLORS = { technical: '#0056B3', physical: '#F59E0B', coaching: '#8B5CF6' };
+const pillarColors = (Colors: ThemeColors) => ({ technical: Colors.secondary, physical: '#F59E0B', coaching: '#8B5CF6' });
 const screenWidth = Dimensions.get('window').width - 60;
 // Must match REPORT_CATEGORIES in scoutconnect-backend/lib/reports.js
 const REPORT_CATEGORIES = ['Inaccurate stats', 'Wrong identity', 'Inappropriate photo', 'Safeguarding concern', 'Other'];
 
 export default function ScoutPlayerScreen() {
+  const formStyles = useFormStyles();
+  const Colors = useColors();
+  const styles = useMemo(() => makeStyles(Colors), [Colors]);
   const { id } = useLocalSearchParams<{ id: string }>();
   const [player, setPlayer] = useState<PlayerProspect | null>(null);
   const [loading, setLoading] = useState(true);
@@ -64,7 +67,7 @@ export default function ScoutPlayerScreen() {
         if (!result?.entry?.id) await load();
       }
     } catch (e: any) {
-      Alert.alert(player.shortlistId ? 'Could not remove from shortlist' : 'Could not add to shortlist', e?.message || String(e));
+      Alert.alert(player.shortlistId ? 'Could not remove from shortlist' : 'Could not add to shortlist', e?.message || 'Please try again.');
     } finally {
       setShortlistBusy(false);
     }
@@ -83,7 +86,7 @@ export default function ScoutPlayerScreen() {
       setContactOpen(false);
       Alert.alert('Request sent', "The club's owner will be told. Their answer appears in your Requests tab.");
     } catch (e: any) {
-      Alert.alert('Could not send your request', e?.message || String(e));
+      Alert.alert('Could not send your request', e?.message || 'Please try again.');
     } finally {
       setSendingRequest(false);
     }
@@ -99,7 +102,7 @@ export default function ScoutPlayerScreen() {
       setReportOpen(false);
       Alert.alert('Thank you', 'An administrator will review your report.');
     } catch (e: any) {
-      Alert.alert('Could not send your report', e?.message || String(e));
+      Alert.alert('Could not send your report', e?.message || 'Please try again.');
     } finally {
       setSendingReport(false);
     }
@@ -145,9 +148,9 @@ export default function ScoutPlayerScreen() {
     const lastEvalDays = daysSinceLastEvaluation(item);
     const historyData = evaluations.map((ev) => ev.dribblingScore || 0);
     const pillars = [
-      { key: 'Technical', value: scores.technical, color: PILLAR_COLORS.technical },
-      { key: 'Physical', value: scores.physical, color: PILLAR_COLORS.physical },
-      { key: 'Coaching', value: scores.coaching, color: PILLAR_COLORS.coaching },
+      { key: 'Technical', value: scores.technical, color: pillarColors(Colors).technical },
+      { key: 'Physical', value: scores.physical, color: pillarColors(Colors).physical },
+      { key: 'Coaching', value: scores.coaching, color: pillarColors(Colors).coaching },
     ];
     const hasUnrated = pillars.some((pillar) => pillar.value === null);
 
@@ -175,8 +178,8 @@ export default function ScoutPlayerScreen() {
               <Text style={styles.ovrValue}>{overall ?? 'N/A'}</Text>
               {trend !== null && trend !== 0 && (
                 <View style={styles.trendRow}>
-                  <Ionicons name={trend > 0 ? 'caret-up' : 'caret-down'} size={11} color={trend > 0 ? '#047857' : '#B91C1C'} />
-                  <Text style={[styles.trendText, { color: trend > 0 ? '#047857' : '#B91C1C' }]}>{Math.abs(trend)}</Text>
+                  <Ionicons name={trend > 0 ? 'caret-up' : 'caret-down'} size={11} color={trend > 0 ? Colors.successText : Colors.dangerText} />
+                  <Text style={[styles.trendText, { color: trend > 0 ? Colors.successText : Colors.dangerText }]}>{Math.abs(trend)}</Text>
                 </View>
               )}
             </View>
@@ -235,7 +238,7 @@ export default function ScoutPlayerScreen() {
                 height={110}
                 strokeWidth={10}
                 radius={22}
-                chartConfig={chartConfig}
+                chartConfig={makeChartConfig(Colors)}
                 withCustomBarColorFromData
                 hideLegend
                 style={styles.chart}
@@ -282,7 +285,7 @@ export default function ScoutPlayerScreen() {
                 data={{ labels: evaluations.map((_, index) => `E${index + 1}`), datasets: [{ data: historyData }] }}
                 width={screenWidth}
                 height={160}
-                chartConfig={chartConfig}
+                chartConfig={makeChartConfig(Colors)}
                 bezier
                 style={styles.chart}
               />
@@ -326,7 +329,7 @@ export default function ScoutPlayerScreen() {
               <Text style={styles.sectionTitle}>Trophies & Medals</Text>
               {item.Achievements.map((ach: Achievement) => (
                 <View key={ach.id} style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginVertical: 2 }}>
-                  <Ionicons name="trophy-outline" size={14} color="#D97706" />
+                  <Ionicons name="trophy-outline" size={14} color={Colors.warnText} />
                   <Text style={styles.statLine}>{ach.title} ({ach.year})</Text>
                 </View>
               ))}
@@ -358,7 +361,7 @@ export default function ScoutPlayerScreen() {
             accessibilityRole="button"
             accessibilityLabel={item.shortlistId ? `Remove ${item.displayName} from shortlist` : `Add ${item.displayName} to shortlist`}
           >
-            <Ionicons name={item.shortlistId ? 'star' : 'star-outline'} size={16} color={item.shortlistId ? Colors.secondary : '#FFF'} style={{ marginRight: 6 }} />
+            <Ionicons name={item.shortlistId ? 'star' : 'star-outline'} size={16} color={item.shortlistId ? Colors.secondary : Colors.card} style={{ marginRight: 6 }} />
             <Text style={[styles.shortlistText, item.shortlistId ? { color: Colors.secondary } : null]}>
               {item.shortlistId ? 'In your shortlist (tap to remove)' : 'Add to Shortlist'}
             </Text>
@@ -486,25 +489,25 @@ export default function ScoutPlayerScreen() {
   );
 }
 
-const chartConfig = {
-  backgroundGradientFrom: '#fff',
-  backgroundGradientTo: '#fff',
+const makeChartConfig = (Colors: ThemeColors) => ({
+  backgroundGradientFrom: Colors.card,
+  backgroundGradientTo: Colors.card,
   color: (opacity = 1) => `rgba(0, 86, 179, ${opacity})`,
-  labelColor: (opacity = 1) => `rgba(0, 0, 0, ${opacity})`,
+  labelColor: () => Colors.textSecondary,
   strokeWidth: 2,
   useShadowColorFromDataset: false,
   decimalPlaces: 1,
-};
+});
 
-const styles = StyleSheet.create({
+const makeStyles = (Colors: ThemeColors) => StyleSheet.create({
   container: { flex: 1, backgroundColor: Colors.canvas },
   topBar: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 8, paddingVertical: 6 },
   backBtn: { width: 40, height: 40, alignItems: 'center', justifyContent: 'center' },
   topTitle: { fontSize: 16, fontWeight: 'bold', color: Colors.textPrimary },
   scroll: { padding: 15, paddingBottom: 40 },
-  card: { ...CardSpec, padding: 15 },
-  cardHeader: { flexDirection: 'row', alignItems: 'center', gap: 12, borderBottomWidth: 1, borderBottomColor: '#F3F4F6', paddingBottom: 12, marginBottom: 12 },
-  profileImage: { width: 55, height: 55, borderRadius: 27.5, backgroundColor: '#eee' },
+  card: { ...makeCardSpec(Colors), padding: 15 },
+  cardHeader: { flexDirection: 'row', alignItems: 'center', gap: 12, borderBottomWidth: 1, borderBottomColor: Colors.surfaceMuted, paddingBottom: 12, marginBottom: 12 },
+  profileImage: { width: 55, height: 55, borderRadius: 27.5, backgroundColor: Colors.surfaceMuted },
   imagePlaceholder: { backgroundColor: Colors.secondary, justifyContent: 'center', alignItems: 'center' },
   imagePlaceholderText: { color: '#fff', fontSize: 20, fontWeight: 'bold' },
   name: { fontSize: 18, fontWeight: 'bold', color: Colors.textPrimary },
@@ -515,25 +518,25 @@ const styles = StyleSheet.create({
   trendRow: { flexDirection: 'row', alignItems: 'center', gap: 2, marginTop: 1 },
   trendText: { fontSize: 10, fontWeight: 'bold' },
   glanceRow: { flexDirection: 'row', gap: 8, marginBottom: 6 },
-  glanceBox: { flex: 1, backgroundColor: '#F9FAFB', borderRadius: 8, borderWidth: 1, borderColor: Colors.border, paddingVertical: 8, paddingHorizontal: 4, alignItems: 'center' },
+  glanceBox: { flex: 1, backgroundColor: Colors.inputBg, borderRadius: 8, borderWidth: 1, borderColor: Colors.border, paddingVertical: 8, paddingHorizontal: 4, alignItems: 'center' },
   glanceValue: { fontSize: 15, fontWeight: 'bold', color: Colors.textPrimary },
   glanceLabel: { fontSize: 10, color: Colors.textSecondary, marginTop: 2, textAlign: 'center' },
   barRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginVertical: 4 },
   barDot: { width: 10, height: 10, borderRadius: 5 },
   barLabel: { width: 64, fontSize: 12, fontWeight: '600', color: Colors.textPrimary },
-  barTrack: { flex: 1, height: 8, borderRadius: 4, backgroundColor: '#E5E7EB', overflow: 'hidden' },
+  barTrack: { flex: 1, height: 8, borderRadius: 4, backgroundColor: Colors.border, overflow: 'hidden' },
   barFill: { height: 8, borderRadius: 4 },
   barValue: { width: 32, textAlign: 'right', fontSize: 12, fontWeight: 'bold', color: Colors.textPrimary },
   sectionTitle: { fontSize: 13, fontWeight: '700', color: Colors.textSecondary, marginBottom: 8, marginTop: 10 },
   chart: { marginVertical: 4, borderRadius: 8, alignSelf: 'center' },
-  portfolioSection: { marginTop: 12, padding: 10, backgroundColor: '#F9FAFB', borderRadius: 8, borderWidth: 1, borderColor: Colors.border },
+  portfolioSection: { marginTop: 12, padding: 10, backgroundColor: Colors.inputBg, borderRadius: 8, borderWidth: 1, borderColor: Colors.border },
   statLine: { fontSize: 13, fontWeight: '600', color: Colors.textPrimary },
   statSubLine: { fontSize: 12, color: Colors.textSecondary, marginTop: 1 },
   contactSection: { marginTop: 12, padding: 10, backgroundColor: Colors.secondaryLight, borderRadius: 8, borderWidth: 1, borderColor: Colors.secondaryBorder },
   contactTitle: { fontSize: 12, fontWeight: 'bold', color: Colors.secondary, marginBottom: 4 },
   contactText: { fontSize: 13, color: Colors.textPrimary, marginVertical: 1 },
   contactNote: { fontSize: 12, color: Colors.textSecondary, marginTop: 8, lineHeight: 17 },
-  requestBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, marginTop: 10, paddingVertical: 10, borderRadius: 8, borderWidth: 1, borderColor: Colors.secondaryBorder, backgroundColor: '#fff' },
+  requestBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, marginTop: 10, paddingVertical: 10, borderRadius: 8, borderWidth: 1, borderColor: Colors.secondaryBorder, backgroundColor: Colors.card },
   requestBtnText: { color: Colors.secondary, fontWeight: 'bold', fontSize: 13 },
   shortlistBtn: { flexDirection: 'row', justifyContent: 'center', alignItems: 'center', backgroundColor: Colors.secondary, padding: 12, borderRadius: 8, marginTop: 15, borderWidth: 1, borderColor: Colors.secondary },
   shortlistBtnOn: { backgroundColor: Colors.secondaryLight, borderColor: Colors.secondaryBorder },
@@ -543,11 +546,11 @@ const styles = StyleSheet.create({
   reportLink: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, marginTop: 12, paddingVertical: 6 },
   reportLinkText: { fontSize: 12, color: Colors.textSecondary },
   reportChips: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 6, marginBottom: 14 },
-  reportChip: { paddingHorizontal: 12, paddingVertical: 8, borderRadius: 16, borderWidth: 1, borderColor: '#D1D5DB' },
+  reportChip: { paddingHorizontal: 12, paddingVertical: 8, borderRadius: 16, borderWidth: 1, borderColor: Colors.borderStrong },
   reportChipActive: { backgroundColor: Colors.secondary, borderColor: Colors.secondary },
   reportChipText: { fontSize: 12, color: Colors.textPrimary, fontWeight: '600' },
   reportChipTextActive: { color: '#fff' },
-  sheetNote: { fontSize: 13, color: Colors.textPrimary, lineHeight: 19, backgroundColor: '#F9FAFB', padding: 12, borderRadius: 8, marginBottom: 12 },
+  sheetNote: { fontSize: 13, color: Colors.textPrimary, lineHeight: 19, backgroundColor: Colors.inputBg, padding: 12, borderRadius: 8, marginBottom: 12 },
   unratedNote: { fontSize: 11, color: Colors.textSecondary, fontStyle: 'italic', textAlign: 'center', marginBottom: 6 },
   errorBox: { alignItems: 'center', marginTop: 50, paddingHorizontal: 24 },
   errorTitle: { fontSize: 16, fontWeight: 'bold', color: Colors.textPrimary },

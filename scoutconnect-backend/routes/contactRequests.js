@@ -117,6 +117,23 @@ router.get('/contact-requests', authenticateToken, requireApprovedScout, async (
   }
 });
 
+// A scout can take back a request that is still waiting. It is marked Withdrawn, not deleted, so the daily
+// limit still counts it and the club keeps a record that it was sent.
+router.put('/contact-requests/:id/withdraw', authenticateToken, requireApprovedScout, async (req, res) => {
+  try {
+    const request = await ContactRequest.findOne({ where: { id: req.params.id, scoutId: req.user.id } });
+    if (!request) return res.status(404).json({ error: 'Request not found.' });
+    if (request.status !== 'Pending') {
+      return res.status(409).json({ error: `This request is already ${String(request.status).toLowerCase()}, so it cannot be withdrawn.` });
+    }
+    await request.update({ status: 'Withdrawn', respondedAt: new Date() });
+    res.status(200).json({ id: request.id, status: 'Withdrawn' });
+  } catch (error) {
+    console.error('Contact request withdraw error:', error);
+    res.status(500).json({ error: 'Failed to withdraw your request.' });
+  }
+});
+
 // --- CONTACT REQUESTS: club owner side ---
 router.get('/club/contact-requests', authenticateToken, ...requireClubOwner, async (req, res) => {
   const status = ['Pending', 'Accepted', 'Declined'].includes(req.query.status) ? req.query.status : null;

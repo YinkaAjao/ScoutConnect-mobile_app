@@ -2,28 +2,13 @@
 import { Tabs } from 'expo-router';
 import React from 'react';
 import { Ionicons } from '@expo/vector-icons';
-import { Colors } from '../../constants/designSystem';
+import { useColors, useTabBarOptions } from '../../theme/theme';
 
 export default function ScoutLayout() {
+  const Colors = useColors();
+  const screenOptions = useTabBarOptions(Colors.secondary);
   return (
-    <Tabs 
-      screenOptions={{ 
-        tabBarActiveTintColor: Colors.secondary, 
-        tabBarInactiveTintColor: Colors.textSecondary,
-        headerShown: false,
-        tabBarStyle: {
-          backgroundColor: '#FFFFFF',
-          borderTopColor: Colors.border,
-          height: 60,
-          paddingBottom: 8,
-          paddingTop: 6,
-        },
-        tabBarLabelStyle: {
-          fontSize: 11,
-          fontWeight: '600',
-        },
-      }}
-    >
+    <Tabs screenOptions={screenOptions}>
       <Tabs.Screen 
         name="index" 
         options={{ 

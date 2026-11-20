@@ -8,8 +8,12 @@ import { buildReportHtml, ReportInput } from './report';
 const friendlyReason = (e: unknown): string => {
   const raw = e instanceof Error ? e.message : String(e ?? '');
   // A native module missing means this installed build predates the feature: nothing the user can fix by retrying.
-  if (/native module|ExpoPrint|ExpoSharing|not available|is not a function|undefined/i.test(raw)) {
+  // Match the missing-module wording only: "Call to function 'ExpoSharing.shareAsync' has been rejected" names the module but is a different failure.
+  if (/cannot find native module|native module .* (not found|is null)|is not a function/i.test(raw)) {
     return 'PDF reports are not available in this version of the app yet. Please update the app and try again.';
+  }
+  if (/not allowed to read file/i.test(raw)) {
+    return 'The PDF was created but this device would not let the app share it. Try a development build of the app, or try again after restarting the app.';
   }
   return 'Something went wrong while preparing the PDF. Please try again in a moment.';
 };

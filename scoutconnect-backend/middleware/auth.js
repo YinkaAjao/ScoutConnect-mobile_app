@@ -5,6 +5,7 @@ const { User, ScoutProfile, ScoutAccessLog } = require('../models');
 const { membershipOf, clubRoleOf } = require('../lib/membership');
 const { provisionUser } = require('../services/provisioning');
 const { createTokenVerifier } = require('../lib/auth');
+const { isDeletedAccount } = require('../services/accountDeletion');
 const { SUPABASE_URL } = require('../config/supabase');
 
 const verifySupabaseToken = createTokenVerifier({
@@ -52,6 +53,8 @@ const authenticateToken = async (req, res, next) => {
         }
       }
     }
+    // A deleted account's token stays valid until it expires, so refuse it here.
+    if (isDeletedAccount(user)) return res.status(401).json({ error: 'This account has been deleted.', code: 'ACCOUNT_DELETED' });
     req.user = user;
     next();
   } catch (err) {

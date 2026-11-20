@@ -1,4 +1,5 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState, useMemo } from 'react';
+import ModalBackdrop from '../../components/ModalBackdrop';
 import { View, Text, FlatList, StyleSheet, RefreshControl, TouchableOpacity, TextInput, ActivityIndicator, Modal, ScrollView } from 'react-native';
 import { useRouter, useFocusEffect } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -9,6 +10,7 @@ import EditAthleteModal from '../../components/EditAthleteModal';
 import { confirmRemoveAthlete } from '../../lib/roster';
 import { consentBadge } from '../../lib/consent';
 import { ageFromDob } from '../../lib/age';
+import { useColors, type ThemeColors } from '../../theme/theme';
 
 interface MatchStat { id: string; goals: number; assists: number; }
 interface Achievement { id: string; }
@@ -28,17 +30,19 @@ interface PositionFilter { label: string; positions: string[]; }
 const ALL_POSITIONS_LABEL = 'All positions';
 const PAGE_SIZE = 20;
 
-const CONSENT_COLORS = {
-  ok: { bg: '#D1FAE5', fg: '#047857', icon: 'checkmark-circle' },
-  warn: { bg: '#FEF3C7', fg: '#B45309', icon: 'time-outline' },
-  bad: { bg: '#FEE2E2', fg: '#B91C1C', icon: 'eye-off-outline' },
-} as const;
+const consentColors = (Colors: ThemeColors) => ({
+  ok: { bg: Colors.successBg, fg: Colors.successText, icon: 'checkmark-circle' },
+  warn: { bg: Colors.warnBg, fg: Colors.warnText, icon: 'time-outline' },
+  bad: { bg: Colors.dangerBg, fg: Colors.dangerText, icon: 'eye-off-outline' },
+} as const);
 
 // Short pill text for the compact card; the full explanation stays in the accessibility label and the edit screen.
 const CONSENT_SHORT = { ok: 'Consent on file', warn: 'Consent needed', bad: 'Hidden from scouts' } as const;
 
 
 export default function MyPlayersScreen() {
+  const Colors = useColors();
+  const styles = useMemo(() => makeStyles(Colors), [Colors]);
   const [roster, setRoster] = useState<Player[]>([]);
   const [totalItems, setTotalItems] = useState(0);
   const [needsConsent, setNeedsConsent] = useState(0); // athletes without guardian consent (whole club)
@@ -120,7 +124,7 @@ export default function MyPlayersScreen() {
     const totalTrophies = item.Achievements?.length || 0;
 
     const badge = consentBadge(item);
-    const color = CONSENT_COLORS[badge.tone];
+    const color = consentColors(Colors)[badge.tone];
 
     return (
       <View style={styles.card}>
@@ -145,7 +149,7 @@ export default function MyPlayersScreen() {
         <View style={styles.side}>
           <View style={styles.iconRow}>
             <TouchableOpacity style={styles.iconBtn} onPress={() => setEditingPlayer(item)} accessibilityRole="button" accessibilityLabel={`Edit ${item.name}`}>
-              <Ionicons name="create-outline" size={18} color="#2E8B57" />
+              <Ionicons name="create-outline" size={18} color={Colors.primary} />
             </TouchableOpacity>
             <TouchableOpacity
               style={styles.iconBtn}
@@ -156,7 +160,7 @@ export default function MyPlayersScreen() {
               accessibilityRole="button"
               accessibilityLabel={`Remove ${item.name} from roster`}
             >
-              <Ionicons name="trash-outline" size={18} color="#B91C1C" />
+              <Ionicons name="trash-outline" size={18} color={Colors.dangerText} />
             </TouchableOpacity>
           </View>
           <TouchableOpacity
@@ -184,7 +188,7 @@ export default function MyPlayersScreen() {
 
       {needsConsent > 0 && (
         <View style={styles.consentBanner} accessibilityRole="alert">
-          <Ionicons name="shield-checkmark-outline" size={16} color="#B45309" />
+          <Ionicons name="shield-checkmark-outline" size={16} color={Colors.warnText} />
           <Text style={styles.consentBannerText}>
             {needsConsent} athlete{needsConsent === 1 ? ' needs' : 's need'} parent or guardian consent before scouts can see {needsConsent === 1 ? 'them' : 'them'}. Open an athlete's Edit screen to record it.
           </Text>
@@ -192,7 +196,7 @@ export default function MyPlayersScreen() {
       )}
 
       <View style={styles.searchBox}>
-        <Ionicons name="search-outline" size={16} color="#888" />
+        <Ionicons name="search-outline" size={16} color={Colors.textSecondary} />
         <TextInput
           style={styles.searchInput}
           placeholder="Search athletes by name"
@@ -204,7 +208,7 @@ export default function MyPlayersScreen() {
         />
         {search.length > 0 && (
           <TouchableOpacity onPress={() => setSearch('')} accessibilityRole="button" accessibilityLabel="Clear search">
-            <Ionicons name="close-circle" size={16} color="#888" />
+            <Ionicons name="close-circle" size={16} color={Colors.textSecondary} />
           </TouchableOpacity>
         )}
       </View>
@@ -215,13 +219,13 @@ export default function MyPlayersScreen() {
         accessibilityRole="button"
         accessibilityLabel={`Filter by position. Current: ${filter?.label ?? ALL_POSITIONS_LABEL}`}
       >
-        <Ionicons name="funnel-outline" size={16} color="#2E8B57" />
+        <Ionicons name="funnel-outline" size={16} color={Colors.primary} />
         <Text style={styles.dropdownText} numberOfLines={1}>{filter?.label ?? ALL_POSITIONS_LABEL}</Text>
-        <Ionicons name="chevron-down" size={16} color="#888" />
+        <Ionicons name="chevron-down" size={16} color={Colors.textSecondary} />
       </TouchableOpacity>
 
       {loading && roster.length === 0 ? (
-        <ActivityIndicator style={{ marginTop: 40 }} size="large" color="#2E8B57" />
+        <ActivityIndicator style={{ marginTop: 40 }} size="large" color={Colors.primary} />
       ) : (
         <FlatList
           data={roster}
@@ -230,7 +234,7 @@ export default function MyPlayersScreen() {
           refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
           onEndReached={loadMore}
           onEndReachedThreshold={0.4}
-          ListFooterComponent={loadingMore ? <ActivityIndicator style={{ marginVertical: 16 }} color="#2E8B57" /> : null}
+          ListFooterComponent={loadingMore ? <ActivityIndicator style={{ marginVertical: 16 }} color={Colors.primary} /> : null}
           ListEmptyComponent={
             error ? (
               <View style={styles.emptyContainer}>
@@ -255,8 +259,9 @@ export default function MyPlayersScreen() {
         />
       )}
 
-      <Modal visible={showFilter} animationType="fade" transparent onRequestClose={() => setShowFilter(false)}>
+      <Modal statusBarTranslucent navigationBarTranslucent visible={showFilter} animationType="fade" transparent onRequestClose={() => setShowFilter(false)}>
         <View style={styles.modalOverlay}>
+          <ModalBackdrop onPress={() => setShowFilter(false)} />
           <View style={styles.modalContent}>
             <Text style={styles.modalTitle}>Filter by position</Text>
             <ScrollView style={{ maxHeight: 420 }}>
@@ -267,7 +272,7 @@ export default function MyPlayersScreen() {
                 accessibilityState={{ selected: !filter }}
               >
                 <Text style={[styles.optionText, !filter && styles.optionTextActive]}>{ALL_POSITIONS_LABEL}</Text>
-                {!filter && <Ionicons name="checkmark" size={18} color="#2E8B57" />}
+                {!filter && <Ionicons name="checkmark" size={18} color={Colors.primary} />}
               </TouchableOpacity>
               {Object.entries(POSITION_CATEGORIES).map(([category, positions]) => (
                 <View key={category}>
@@ -285,7 +290,7 @@ export default function MyPlayersScreen() {
                           accessibilityState={{ selected: active }}
                         >
                           <Text style={[styles.optionText, active && styles.optionTextActive]}>{option.label}</Text>
-                          {active && <Ionicons name="checkmark" size={18} color="#2E8B57" />}
+                          {active && <Ionicons name="checkmark" size={18} color={Colors.primary} />}
                         </TouchableOpacity>
                       );
                     })}
@@ -311,41 +316,41 @@ export default function MyPlayersScreen() {
   );
 }
 
-const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#f4f4f4', padding: 15 },
+const makeStyles = (Colors: ThemeColors) => StyleSheet.create({
+  container: { flex: 1, backgroundColor: Colors.canvas, padding: 15 },
   headerRow: { alignItems: 'center', marginBottom: 12, marginTop: 10 },
-  header: { fontSize: 24, fontWeight: 'bold', color: '#333' },
-  count: { fontSize: 12, color: '#888', marginTop: 2 },
-  searchBox: { flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: '#fff', borderRadius: 10, paddingHorizontal: 12, borderWidth: 1, borderColor: '#E5E7EB', marginBottom: 10 },
-  searchInput: { flex: 1, paddingVertical: 10, fontSize: 14, color: '#111' },
-  dropdown: { flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: '#fff', borderRadius: 10, paddingHorizontal: 12, paddingVertical: 12, borderWidth: 1, borderColor: '#E5E7EB', marginBottom: 12 },
-  dropdownText: { flex: 1, fontSize: 14, fontWeight: '600', color: '#111' },
+  header: { fontSize: 24, fontWeight: 'bold', color: Colors.textPrimary },
+  count: { fontSize: 12, color: Colors.textSecondary, marginTop: 2 },
+  searchBox: { flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: Colors.card, borderRadius: 10, paddingHorizontal: 12, borderWidth: 1, borderColor: Colors.border, marginBottom: 10 },
+  searchInput: { flex: 1, paddingVertical: 10, fontSize: 14, color: Colors.textPrimary },
+  dropdown: { flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: Colors.card, borderRadius: 10, paddingHorizontal: 12, paddingVertical: 12, borderWidth: 1, borderColor: Colors.border, marginBottom: 12 },
+  dropdownText: { flex: 1, fontSize: 14, fontWeight: '600', color: Colors.textPrimary },
   modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', padding: 24 },
-  modalContent: { backgroundColor: '#fff', borderRadius: 16, padding: 16 },
-  modalTitle: { fontSize: 18, fontWeight: 'bold', color: '#111', marginBottom: 8 },
-  groupHeader: { fontSize: 11, fontWeight: 'bold', color: '#888', marginTop: 12, marginBottom: 2 },
-  option: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: '#F3F4F6' },
-  optionText: { fontSize: 15, color: '#333' },
-  optionTextActive: { fontWeight: 'bold', color: '#2E8B57' },
-  closeBtn: { marginTop: 12, alignItems: 'center', paddingVertical: 12, borderRadius: 10, backgroundColor: '#E5E7EB' },
-  closeText: { fontWeight: 'bold', color: '#333' },
-  card: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#fff', borderRadius: 14, marginBottom: 10, padding: 12, gap: 8, elevation: 2, shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.08, shadowRadius: 4 },
+  modalContent: { backgroundColor: Colors.card, borderRadius: 16, padding: 16 },
+  modalTitle: { fontSize: 18, fontWeight: 'bold', color: Colors.textPrimary, marginBottom: 8 },
+  groupHeader: { fontSize: 11, fontWeight: 'bold', color: Colors.textSecondary, marginTop: 12, marginBottom: 2 },
+  option: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: Colors.surfaceMuted },
+  optionText: { fontSize: 15, color: Colors.textPrimary },
+  optionTextActive: { fontWeight: 'bold', color: Colors.primary },
+  closeBtn: { marginTop: 12, alignItems: 'center', paddingVertical: 12, borderRadius: 10, backgroundColor: Colors.border },
+  closeText: { fontWeight: 'bold', color: Colors.textPrimary },
+  card: { flexDirection: 'row', alignItems: 'center', backgroundColor: Colors.card, borderRadius: 14, marginBottom: 10, padding: 12, gap: 8, elevation: 2, shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.08, shadowRadius: 4 },
   main: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: 12 },
-  avatar: { width: 46, height: 46, borderRadius: 23, backgroundColor: '#2E8B57', alignItems: 'center', justifyContent: 'center' },
+  avatar: { width: 46, height: 46, borderRadius: 23, backgroundColor: Colors.primary, alignItems: 'center', justifyContent: 'center' },
   avatarText: { color: '#fff', fontSize: 18, fontWeight: 'bold' },
   info: { flex: 1 },
-  name: { fontSize: 16, fontWeight: 'bold', color: '#111' },
-  detail: { fontSize: 12, color: '#666', marginTop: 1 },
+  name: { fontSize: 16, fontWeight: 'bold', color: Colors.textPrimary },
+  detail: { fontSize: 12, color: Colors.textSecondary, marginTop: 1 },
   side: { alignItems: 'flex-end', gap: 6 },
   iconRow: { flexDirection: 'row', gap: 2 },
   iconBtn: { padding: 6 },
   consentPill: { flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 8, paddingVertical: 3, borderRadius: 10 },
   consentPillText: { fontSize: 10, fontWeight: 'bold', flexShrink: 1 },
-  consentBanner: { flexDirection: 'row', alignItems: 'flex-start', gap: 8, backgroundColor: '#FEF3C7', padding: 12, borderRadius: 8, marginBottom: 10 },
-  consentBannerText: { flex: 1, fontSize: 12, color: '#92400E', lineHeight: 17 },
+  consentBanner: { flexDirection: 'row', alignItems: 'flex-start', gap: 8, backgroundColor: Colors.warnBg, padding: 12, borderRadius: 8, marginBottom: 10 },
+  consentBannerText: { flex: 1, fontSize: 12, color: Colors.warnText, lineHeight: 17 },
   emptyContainer: { alignItems: 'center', marginTop: 50 },
-  emptyText: { fontSize: 18, fontWeight: 'bold', color: '#555', marginBottom: 8 },
-  emptySubtext: { fontSize: 14, color: '#888', textAlign: 'center', paddingHorizontal: 20 },
-  retryBtn: { marginTop: 14, backgroundColor: '#2E8B57', paddingHorizontal: 18, paddingVertical: 10, borderRadius: 8 },
+  emptyText: { fontSize: 18, fontWeight: 'bold', color: Colors.textSecondary, marginBottom: 8 },
+  emptySubtext: { fontSize: 14, color: Colors.textSecondary, textAlign: 'center', paddingHorizontal: 20 },
+  retryBtn: { marginTop: 14, backgroundColor: Colors.primary, paddingHorizontal: 18, paddingVertical: 10, borderRadius: 8 },
   retryText: { color: '#fff', fontWeight: 'bold' },
 });

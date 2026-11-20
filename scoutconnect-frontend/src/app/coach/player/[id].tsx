@@ -1,5 +1,5 @@
 // src/app/coach/player/[id].tsx
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useState, useMemo } from 'react';
 import { View, Text, StyleSheet, ScrollView, TouchableOpacity, ActivityIndicator, Dimensions, Image, Alert } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
@@ -9,7 +9,7 @@ import { pillarScores, progressPoints } from '../../../lib/ratings';
 import { consentBadge } from '../../../lib/consent';
 import { shareReportPdf } from '../../../lib/reportExport';
 import { Ionicons } from '@expo/vector-icons';
-import { Colors, CardSpec } from '../../../constants/designSystem';
+import { useColors, makeCardSpec, type ThemeColors } from '../../../theme/theme';
 import EditAthleteModal from '../../../components/EditAthleteModal';
 import { confirmRemoveAthlete, confirmRemoveRecord } from '../../../lib/roster';
 import EditMatchStatModal, { EditableMatchStat } from '../../../components/EditMatchStatModal';
@@ -87,15 +87,17 @@ interface Player {
   Achievements?: Achievement[];
 }
 
-const CONSENT_COLORS = {
-  ok: { bg: '#D1FAE5', fg: '#047857', icon: 'checkmark-circle' },
-  warn: { bg: '#FEF3C7', fg: '#B45309', icon: 'time-outline' },
-  bad: { bg: '#FEE2E2', fg: '#B91C1C', icon: 'eye-off-outline' },
-} as const;
+const consentColors = (Colors: ThemeColors) => ({
+  ok: { bg: Colors.successBg, fg: Colors.successText, icon: 'checkmark-circle' },
+  warn: { bg: Colors.warnBg, fg: Colors.warnText, icon: 'time-outline' },
+  bad: { bg: Colors.dangerBg, fg: Colors.dangerText, icon: 'eye-off-outline' },
+} as const);
 
 const screenWidth = Dimensions.get('window').width - 40;
 
 export default function PlayerProfileScreen() {
+  const Colors = useColors();
+  const styles = useMemo(() => makeStyles(Colors), [Colors]);
   const { id } = useLocalSearchParams();
   const router = useRouter();
   
@@ -169,9 +171,9 @@ export default function PlayerProfileScreen() {
   const lineChartData = {
     labels: progressLabels,
     datasets: [
-      { data: progress.map((p) => p.technical), color: () => PROGRESS_COLORS.technical, strokeWidth: 2 },
-      { data: progress.map((p) => p.physical), color: () => PROGRESS_COLORS.physical, strokeWidth: 2 },
-      { data: progress.map((p) => p.coaching), color: () => PROGRESS_COLORS.coaching, strokeWidth: 2 },
+      { data: progress.map((p) => p.technical), color: () => progressColors(Colors).technical, strokeWidth: 2 },
+      { data: progress.map((p) => p.physical), color: () => progressColors(Colors).physical, strokeWidth: 2 },
+      { data: progress.map((p) => p.coaching), color: () => progressColors(Colors).coaching, strokeWidth: 2 },
       // Invisible series that pins the vertical axis to 1-5 so improvement looks the same for every player.
       { data: progress.map((_, i) => (i % 2 === 0 ? 5 : 1)), color: () => 'rgba(0,0,0,0)', withDots: false },
     ],
@@ -218,7 +220,7 @@ export default function PlayerProfileScreen() {
             style={styles.headerIconBtn}
             accessibilityLabel="Remove athlete"
           >
-            <Ionicons name="trash-outline" size={20} color="#DC2626" />
+            <Ionicons name="trash-outline" size={20} color={Colors.dangerText} />
           </TouchableOpacity>
         </View>
       </View>
@@ -245,7 +247,7 @@ export default function PlayerProfileScreen() {
           </View>
           {(() => {
             const badge = consentBadge(player);
-            const color = CONSENT_COLORS[badge.tone];
+            const color = consentColors(Colors)[badge.tone];
             return (
               <TouchableOpacity
                 style={[styles.consentPill, { backgroundColor: color.bg }]}
@@ -270,7 +272,7 @@ export default function PlayerProfileScreen() {
               height={120}
               strokeWidth={12}
               radius={24}
-              chartConfig={chartConfig}
+              chartConfig={makeChartConfig(Colors)}
               hideLegend={false}
               style={styles.chart}
             />
@@ -330,7 +332,7 @@ export default function PlayerProfileScreen() {
                 data={lineChartData}
                 width={screenWidth}
                 height={220}
-                chartConfig={chartConfig}
+                chartConfig={makeChartConfig(Colors)}
                 withShadow={false}
                 fromZero={false}
                 segments={4}
@@ -363,7 +365,7 @@ export default function PlayerProfileScreen() {
                     accessibilityLabel="Remove this evaluation"
                     style={styles.recordBtn}
                   >
-                    <Ionicons name="trash-outline" size={18} color="#DC2626" />
+                    <Ionicons name="trash-outline" size={18} color={Colors.dangerText} />
                   </TouchableOpacity>
                 </View>
                 <Text style={styles.statMatchup}>
@@ -395,7 +397,7 @@ export default function PlayerProfileScreen() {
                     accessibilityLabel={`Remove match record ${stat.competition}`}
                     style={styles.recordBtn}
                   >
-                    <Ionicons name="trash-outline" size={18} color="#DC2626" />
+                    <Ionicons name="trash-outline" size={18} color={Colors.dangerText} />
                   </TouchableOpacity>
                 </View>
 
@@ -423,7 +425,7 @@ export default function PlayerProfileScreen() {
           {player.Achievements && player.Achievements.length > 0 ? (
             player.Achievements.map((ach) => (
               <View key={ach.id} style={styles.achievementItem}>
-                <Ionicons name="trophy" size={24} color="#D97706" style={{ marginRight: 15 }} />
+                <Ionicons name="trophy" size={24} color={Colors.warnText} style={{ marginRight: 15 }} />
                 <View style={{ flex: 1 }}>
                   <Text style={styles.achievementTitle}>{ach.title}</Text>
                   <Text style={styles.achievementYear}>{ach.year}</Text>
@@ -437,7 +439,7 @@ export default function PlayerProfileScreen() {
                   accessibilityLabel={`Remove ${ach.title}`}
                   style={styles.recordBtn}
                 >
-                  <Ionicons name="trash-outline" size={18} color="#DC2626" />
+                  <Ionicons name="trash-outline" size={18} color={Colors.dangerText} />
                 </TouchableOpacity>
               </View>
             ))
@@ -473,19 +475,19 @@ export default function PlayerProfileScreen() {
   );
 }
 
-const PROGRESS_COLORS = { technical: '#2E8B57', physical: '#2563EB', coaching: '#F59E0B' };
+const progressColors = (Colors: ThemeColors) => ({ technical: Colors.primary, physical: '#2563EB', coaching: '#F59E0B' });
 
-const chartConfig = {
-  backgroundGradientFrom: '#fff',
-  backgroundGradientTo: '#fff',
+const makeChartConfig = (Colors: ThemeColors) => ({
+  backgroundGradientFrom: Colors.card,
+  backgroundGradientTo: Colors.card,
   color: (opacity = 1) => `rgba(46, 139, 87, ${opacity})`,
-  labelColor: (opacity = 1) => `rgba(0, 0, 0, ${opacity})`,
+  labelColor: () => Colors.textSecondary,
   strokeWidth: 2,
   useShadowColorFromDataset: false,
   decimalPlaces: 1,
-};
+});
 
-const styles = StyleSheet.create({
+const makeStyles = (Colors: ThemeColors) => StyleSheet.create({
   container: { flex: 1, backgroundColor: Colors.canvas, paddingHorizontal: 15 },
   center: { flex: 1, justifyContent: 'center', alignItems: 'center' },
   errorText: { fontSize: 16, color: Colors.danger, marginBottom: 20 },
@@ -497,30 +499,30 @@ const styles = StyleSheet.create({
   headerIconBtn: { padding: 5 },
 
   heroCard: { backgroundColor: Colors.primary, padding: 25, borderRadius: 12, marginBottom: 15, alignItems: 'center', elevation: 4 },
-  profileImage: { width: 80, height: 80, borderRadius: 40, marginBottom: 12, borderWidth: 2, borderColor: '#FFF', backgroundColor: '#EEE' },
-  imagePlaceholder: { width: 80, height: 80, borderRadius: 40, backgroundColor: Colors.primaryDark, justifyContent: 'center', alignItems: 'center', marginBottom: 12, borderWidth: 2, borderColor: '#FFF' },
+  profileImage: { width: 80, height: 80, borderRadius: 40, marginBottom: 12, borderWidth: 2, borderColor: Colors.card, backgroundColor: Colors.surfaceMuted },
+  imagePlaceholder: { width: 80, height: 80, borderRadius: 40, backgroundColor: Colors.primaryDark, justifyContent: 'center', alignItems: 'center', marginBottom: 12, borderWidth: 2, borderColor: Colors.card },
   imagePlaceholderText: { color: '#FFF', fontSize: 32, fontWeight: 'bold' },
   name: { fontSize: 24, fontWeight: 'bold', color: '#fff', marginBottom: 4, textAlign: 'center' },
   clubText: { fontSize: 13, color: '#A7F3D0', fontWeight: '600' },
   badgeRow: { flexDirection: 'row', gap: 10 },
-  positionBadge: { backgroundColor: '#fff', color: Colors.primary, paddingHorizontal: 12, paddingVertical: 6, borderRadius: 15, fontSize: 13, fontWeight: 'bold', overflow: 'hidden' },
+  positionBadge: { backgroundColor: Colors.card, color: Colors.primary, paddingHorizontal: 12, paddingVertical: 6, borderRadius: 15, fontSize: 13, fontWeight: 'bold', overflow: 'hidden' },
   dobBadge: { backgroundColor: 'rgba(255,255,255,0.2)', color: '#fff', paddingHorizontal: 12, paddingVertical: 6, borderRadius: 15, fontSize: 13, fontWeight: '600', overflow: 'hidden' },
   
-  sectionCard: { ...CardSpec, padding: 20, marginBottom: 15 },
+  sectionCard: { ...makeCardSpec(Colors), padding: 20, marginBottom: 15 },
   sectionTitle: { fontSize: 16, fontWeight: 'bold', color: Colors.textPrimary, marginBottom: 15 },
   chart: { marginVertical: 8, borderRadius: 8, alignSelf: 'center' },
   
-  checklistSummaryBox: { marginTop: 12, padding: 12, backgroundColor: '#F9FAFB', borderRadius: 8, borderWidth: 1, borderColor: Colors.border },
+  checklistSummaryBox: { marginTop: 12, padding: 12, backgroundColor: Colors.inputBg, borderRadius: 8, borderWidth: 1, borderColor: Colors.border },
   checklistSubTitle: { fontSize: 11, fontWeight: 'bold', color: Colors.textSecondary, marginBottom: 8 },
   pillarRow: { flexDirection: 'row', justifyContent: 'space-between', gap: 6, marginBottom: 8 },
-  pillarPill: { flex: 1, backgroundColor: '#FFF', paddingVertical: 8, borderRadius: 6, alignItems: 'center', borderWidth: 1, borderColor: Colors.border },
+  pillarPill: { flex: 1, backgroundColor: Colors.card, paddingVertical: 8, borderRadius: 6, alignItems: 'center', borderWidth: 1, borderColor: Colors.border },
   pillarLabel: { fontSize: 10, fontWeight: 'bold', color: Colors.textSecondary },
   pillarVal: { fontSize: 15, fontWeight: 'bold', color: Colors.primary, marginTop: 2 },
   noteBlock: { marginTop: 8 },
   noteHeading: { fontSize: 12, fontWeight: 'bold', color: Colors.textPrimary },
   noteBody: { fontSize: 13, color: Colors.textSecondary, marginTop: 2 },
 
-  emptyCard: { ...CardSpec, padding: 20, marginBottom: 15, alignItems: 'center' },
+  emptyCard: { ...makeCardSpec(Colors), padding: 20, marginBottom: 15, alignItems: 'center' },
   emptyText: { color: Colors.textSecondary, fontStyle: 'italic' },
   emptySubtext: { color: Colors.textSecondary, fontStyle: 'italic', marginTop: 5 },
   
@@ -529,10 +531,10 @@ const styles = StyleSheet.create({
   statComp: { fontSize: 16, fontWeight: 'bold', color: Colors.textPrimary },
   statDate: { fontSize: 12, color: Colors.textSecondary },
   statMatchup: { fontSize: 14, color: Colors.secondary, marginBottom: 8, fontWeight: '500' },
-  statMetricsRow: { flexDirection: 'row', justifyContent: 'space-between', backgroundColor: '#F9FAFB', padding: 10, borderRadius: 8, borderWidth: 1, borderColor: Colors.border },
+  statMetricsRow: { flexDirection: 'row', justifyContent: 'space-between', backgroundColor: Colors.inputBg, padding: 10, borderRadius: 8, borderWidth: 1, borderColor: Colors.border },
   statMetric: { fontSize: 13, color: Colors.textPrimary, fontWeight: '600' },
   
-  achievementItem: { flexDirection: 'row', alignItems: 'center', marginBottom: 12, backgroundColor: '#FFFBEB', padding: 12, borderRadius: 8, borderWidth: 1, borderColor: '#FEF3C7' },
+  achievementItem: { flexDirection: 'row', alignItems: 'center', marginBottom: 12, backgroundColor: Colors.warnBg, padding: 12, borderRadius: 8, borderWidth: 1, borderColor: Colors.warnBorder },
   achievementTitle: { fontSize: 16, fontWeight: 'bold', color: Colors.textPrimary },
   achievementYear: { fontSize: 12, color: Colors.textSecondary, marginTop: 2 },
 

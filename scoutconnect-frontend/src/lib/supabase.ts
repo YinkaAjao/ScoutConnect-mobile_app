@@ -2,8 +2,17 @@
 import { createClient } from '@supabase/supabase-js';
 import * as SecureStore from 'expo-secure-store';
 
-const SUPABASE_URL = process.env.EXPO_PUBLIC_SUPABASE_URL || 'https://placeholder.supabase.co';
-const SUPABASE_ANON_KEY = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY || 'placeholder';
+// EXPO_PUBLIC_* values are inlined at build time. Fail loudly if they are missing
+// (e.g. an EAS cloud build without the env vars) instead of silently using a dead host.
+const SUPABASE_URL = process.env.EXPO_PUBLIC_SUPABASE_URL;
+const SUPABASE_ANON_KEY = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY;
+
+if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
+  throw new Error(
+    'Missing EXPO_PUBLIC_SUPABASE_URL or EXPO_PUBLIC_SUPABASE_ANON_KEY. ' +
+      'Set them in .env for local runs, or with `eas env:create` for EAS builds, then rebuild.'
+  );
+}
 
 // SecureStore rejects values over ~2KB, and a Supabase session can exceed that, so values are chunked.
 const CHUNK_SIZE = 1800;

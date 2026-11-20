@@ -1,16 +1,19 @@
 // src/app/index.tsx
-import React, { useState, useEffect } from 'react';
-import { View, Text, TextInput, TouchableOpacity, StyleSheet, Alert, KeyboardAvoidingView, Platform, ActivityIndicator, Modal, FlatList, ScrollView, Image } from 'react-native';
+import React, { useState, useEffect, useMemo } from 'react';
+import ModalBackdrop from '../components/ModalBackdrop';
+import { View, Text, TextInput, TouchableOpacity, StyleSheet, Alert, KeyboardAvoidingView, ActivityIndicator, Modal, FlatList, ScrollView, Image } from 'react-native';
+import PasswordField from '../components/PasswordField';
+import { ThemeQuickToggle } from '../components/AppearanceToggle';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter, type Href } from 'expo-router';
 import * as SecureStore from 'expo-secure-store';
 import { Ionicons } from '@expo/vector-icons';
 import { supabase } from '../lib/supabase';
-import { Colors, CardSpec } from '../constants/designSystem';
 import { apiFetch } from '../lib/api';
 import { ENTITY_TYPES } from '../constants/entityTypes';
 import * as WebBrowser from 'expo-web-browser';
 import * as AuthSession from 'expo-auth-session';
+import { useColors, makeCardSpec, useSheetPad, type ThemeColors } from '../theme/theme';
 
 WebBrowser.maybeCompleteAuthSession();
 
@@ -30,6 +33,9 @@ const getFriendlyErrorMessage = (error: any): string => {
 };
 
 export default function AuthScreen() {
+  const Colors = useColors();
+  const styles = useMemo(() => makeStyles(Colors), [Colors]);
+  const sheetPad = useSheetPad();
   const [isLogin, setIsLogin] = useState(true);
   
   const [email, setEmail] = useState('');
@@ -53,6 +59,10 @@ export default function AuthScreen() {
   const [newClubEntityType, setNewClubEntityType] = useState('');
   const [newClubContactEmail, setNewClubContactEmail] = useState('');
   const [newClubContactPhone, setNewClubContactPhone] = useState('');
+
+  const [showForgot, setShowForgot] = useState(false);
+  const [resetEmail, setResetEmail] = useState('');
+  const [resetSending, setResetSending] = useState(false);
 
   const router = useRouter();
 
@@ -146,6 +156,29 @@ export default function AuthScreen() {
     return true;
   };
 
+  const sendResetLink = async () => {
+    const address = resetEmail.trim();
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(address)) {
+      Alert.alert('Invalid Email', 'Please enter a valid email address.');
+      return;
+    }
+    setResetSending(true);
+    try {
+      const { error } = await supabase.auth.resetPasswordForEmail(address, {
+        redirectTo: AuthSession.makeRedirectUri({ scheme: 'scoutconnectfrontend', path: 'reset-password' }),
+      });
+      if (error && /rate limit/i.test(error.message)) throw error;
+      // Same answer whether or not the address has an account, so this cannot be used to find out who is registered.
+      setShowForgot(false);
+      setResetEmail('');
+      Alert.alert('Check your email', 'If that address has an account, we have sent a link to reset your passcode. It expires after a while and works once.');
+    } catch (error) {
+      Alert.alert('Could not send the link', getFriendlyErrorMessage(error));
+    } finally {
+      setResetSending(false);
+    }
+  };
+
   const handleGoogleAuth = async () => {
     setIsLoading(true);
     try {
@@ -190,6 +223,15 @@ export default function AuthScreen() {
               return;
             }
             if (!googleUser.user_metadata?.role) {
+              // A first-time coach must name an academy, as in the email form; otherwise the server cannot build the profile.
+              if (role === 'Coach' && !selectedClub && !newClubName.trim()) {
+                await supabase.auth.signOut();
+                Alert.alert(
+                  'Choose your academy first',
+                  'New coaches must pick or register an academy. Tap "Create credentials", choose the academy, then continue with Google.'
+                );
+                return;
+              }
               const { error: metaError } = await supabase.auth.updateUser({
                 data: buildRegistrationMetadata(googleUser.user_metadata?.full_name || googleUser.email?.split('@')[0]),
               });
@@ -240,7 +282,11 @@ export default function AuthScreen() {
         const { data: authData, error: authError } = await supabase.auth.signUp({
           email: email.trim(),
           password: password,
-          options: { data: buildRegistrationMetadata() },
+          options: {
+            data: buildRegistrationMetadata(),
+            // After confirming the email, the link opens the app instead of a dead web page.
+            emailRedirectTo: AuthSession.makeRedirectUri({ scheme: 'scoutconnectfrontend' }),
+          },
         });
 
         if (authError) throw authError;
@@ -272,8 +318,12 @@ export default function AuthScreen() {
 
   return (
     <SafeAreaView style={styles.container}>
-      <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={styles.formCard}>
-        
+      {/* Android is edge-to-edge, so the OS no longer resizes for the keyboard: 'padding' is needed on both platforms. */}
+      <KeyboardAvoidingView behavior="padding" style={{ flex: 1 }}>
+      <ScrollView contentContainerStyle={styles.scrollContent} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
+      <ThemeQuickToggle />
+      <View style={styles.formCard}>
+
         <View style={styles.logoContainer}>
           <View style={styles.logoCircle}>
             <Ionicons name="football" size={28} color="#FFF" />
@@ -291,7 +341,7 @@ export default function AuthScreen() {
           </TouchableOpacity>
         </View>
 
-        <ScrollView showsVerticalScrollIndicator={false} style={{ maxHeight: 380 }}>
+        <View>
           <Text style={styles.inputLabel}>Email Address *</Text>
           <TextInput 
             style={styles.input} 
@@ -330,26 +380,32 @@ export default function AuthScreen() {
           )}
 
           <Text style={styles.inputLabel}>Passcode *</Text>
-          <TextInput 
+          <PasswordField 
             style={styles.input} 
             placeholder="••••••••" 
             placeholderTextColor="#9CA3AF"
             value={password} 
             onChangeText={setPassword} 
-            secureTextEntry 
+             
             editable={!isLoading} 
           />
+
+          {isLogin && (
+            <TouchableOpacity onPress={() => { setResetEmail(email); setShowForgot(true); }} accessibilityRole="button" style={{ alignSelf: 'flex-end', marginTop: -8, marginBottom: 12 }}>
+              <Text style={{ color: Colors.secondary, fontSize: 12, fontWeight: 'bold' }}>Forgot passcode?</Text>
+            </TouchableOpacity>
+          )}
 
           {!isLogin && (
             <>
               <Text style={styles.inputLabel}>Confirm Passcode *</Text>
-              <TextInput 
+              <PasswordField 
                 style={styles.input} 
                 placeholder="••••••••" 
                 placeholderTextColor="#9CA3AF"
                 value={confirmPassword} 
                 onChangeText={setConfirmPassword} 
-                secureTextEntry 
+                 
                 editable={!isLoading} 
               />
             </>
@@ -390,8 +446,15 @@ export default function AuthScreen() {
               <Text style={{ color: Colors.primary, fontWeight: 'bold' }}>{isLogin ? "Create credentials" : "Sign In"}</Text>
             </Text>
           </TouchableOpacity>
-        </ScrollView>
-      </KeyboardAvoidingView>
+
+          <TouchableOpacity onPress={() => router.push('/privacy' as Href)} accessibilityRole="link" style={{ alignItems: 'center', marginBottom: 6 }}>
+            <Text style={{ fontSize: 12, color: Colors.textSecondary, textAlign: 'center' }}>
+              {isLogin ? 'By signing in you accept our ' : 'By creating credentials you accept our '}
+              <Text style={{ color: Colors.secondary, fontWeight: 'bold' }}>Privacy Policy & Terms</Text>
+            </Text>
+          </TouchableOpacity>
+        </View>
+      </View>
 
       {/* Dynamic Footer Badges Based on Selected Role */}
       <View style={styles.footerRow}>
@@ -431,10 +494,41 @@ export default function AuthScreen() {
           </>
         )}
       </View>
+      </ScrollView>
+      </KeyboardAvoidingView>
 
-      <Modal visible={showClubModal} animationType="slide" transparent={true}>
+      <Modal statusBarTranslucent navigationBarTranslucent visible={showForgot} animationType="slide" transparent={true} onRequestClose={() => setShowForgot(false)}>
         <View style={styles.modalOverlay}>
-          <View style={styles.modalContent}>
+          <ModalBackdrop onPress={() => !resetSending && setShowForgot(false)} />
+          <View style={[styles.modalContent, sheetPad]}>
+            <Text style={styles.modalTitle}>Reset your passcode</Text>
+            <Text style={{ fontSize: 13, color: Colors.textSecondary, marginBottom: 12 }}>
+              Enter your account email. We will send a link that opens this app so you can choose a new passcode.
+            </Text>
+            <TextInput
+              style={styles.input}
+              placeholder="e.g. coach@academy.rw"
+              placeholderTextColor="#9CA3AF"
+              keyboardType="email-address"
+              autoCapitalize="none"
+              value={resetEmail}
+              onChangeText={setResetEmail}
+              editable={!resetSending}
+            />
+            <TouchableOpacity style={[styles.primaryBtn, resetSending && styles.primaryBtnDisabled]} onPress={sendResetLink} disabled={resetSending}>
+              {resetSending ? <ActivityIndicator color="#fff" /> : <Text style={styles.primaryBtnText}>Send reset link</Text>}
+            </TouchableOpacity>
+            <TouchableOpacity style={{ alignItems: 'center', marginTop: 14 }} onPress={() => setShowForgot(false)} disabled={resetSending}>
+              <Text style={{ color: Colors.textSecondary }}>Cancel</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+
+      <Modal statusBarTranslucent navigationBarTranslucent visible={showClubModal} animationType="slide" transparent={true}>
+        <View style={styles.modalOverlay}>
+          <ModalBackdrop onPress={() => setShowClubModal(false)} />
+          <View style={[styles.modalContent, sheetPad]}>
             <Text style={styles.modalTitle}>Select or Register Academy</Text>
             
             {!isCreatingNewClub ? (
@@ -518,7 +612,7 @@ export default function AuthScreen() {
                       onPress={() => setNewClubEntityType(type)}
                       style={{
                         paddingHorizontal: 12, paddingVertical: 8, borderRadius: 16, borderWidth: 1,
-                        borderColor: newClubEntityType === type ? Colors.primary : '#D1D5DB',
+                        borderColor: newClubEntityType === type ? Colors.primary : Colors.borderStrong,
                         backgroundColor: newClubEntityType === type ? Colors.primary : 'transparent',
                       }}
                     >
@@ -587,45 +681,46 @@ export default function AuthScreen() {
   );
 }
 
-const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: Colors.canvas, justifyContent: 'center', padding: 15 },
-  formCard: { ...CardSpec, padding: 20, marginHorizontal: 5, marginTop: 20 },
+const makeStyles = (Colors: ThemeColors) => StyleSheet.create({
+  container: { flex: 1, backgroundColor: Colors.canvas },
+  scrollContent: { flexGrow: 1, justifyContent: 'center', padding: 15 },
+  formCard: { ...makeCardSpec(Colors), padding: 20, marginHorizontal: 5, marginTop: 20 },
   logoContainer: { alignItems: 'center', marginBottom: 20 },
   logoCircle: { width: 50, height: 50, borderRadius: 25, backgroundColor: Colors.primary, justifyContent: 'center', alignItems: 'center', marginBottom: 10 },
   title: { fontSize: 26, fontWeight: 'bold', color: Colors.textPrimary },
   subtitle: { fontSize: 13, color: Colors.textSecondary, marginTop: 2 },
-  roleToggle: { flexDirection: 'row', marginBottom: 20, backgroundColor: '#F3F4F6', borderRadius: 8, padding: 4 },
+  roleToggle: { flexDirection: 'row', marginBottom: 20, backgroundColor: Colors.surfaceMuted, borderRadius: 8, padding: 4 },
   roleBtn: { flex: 1, paddingVertical: 10, alignItems: 'center', borderRadius: 6 },
   roleBtnActive: { backgroundColor: Colors.primary },
   roleText: { color: Colors.textSecondary, fontWeight: 'bold' },
   roleTextActive: { color: '#FFF' },
   inputLabel: { fontSize: 12, fontWeight: '600', color: Colors.textSecondary, marginBottom: 4 },
-  input: { backgroundColor: '#F9FAFB', borderWidth: 1, borderColor: Colors.border, borderRadius: 8, paddingHorizontal: 12, paddingVertical: 10, marginBottom: 15, fontSize: 15 },
+  input: { backgroundColor: Colors.inputBg, borderWidth: 1, borderColor: Colors.border, borderRadius: 8, paddingHorizontal: 12, paddingVertical: 10, marginBottom: 15, fontSize: 15, color: Colors.textPrimary },
   primaryBtn: { backgroundColor: Colors.primary, padding: 14, borderRadius: 8, alignItems: 'center', marginTop: 5 },
   primaryBtnDisabled: { backgroundColor: '#9CA3AF' },
   primaryBtnText: { color: '#FFF', fontSize: 15, fontWeight: 'bold' },
   
   dividerRow: { flexDirection: 'row', alignItems: 'center', marginVertical: 15 },
   dividerLine: { flex: 1, height: 1, backgroundColor: Colors.border },
-  googleBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', backgroundColor: '#FFF', borderWidth: 1, borderColor: Colors.border, padding: 14, borderRadius: 8, gap: 10 },
+  googleBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', backgroundColor: Colors.card, borderWidth: 1, borderColor: Colors.border, padding: 14, borderRadius: 8, gap: 10 },
   googleIcon: { width: 20, height: 20 },
   googleBtnText: { color: Colors.textPrimary, fontWeight: '600', fontSize: 14 },
   
   switchBtn: { marginTop: 20, marginBottom: 10, alignItems: 'center' },
   switchBtnText: { color: Colors.textSecondary, fontSize: 13 },
-  clubSelector: { backgroundColor: '#F9FAFB', borderWidth: 1, borderColor: Colors.border, padding: 12, borderRadius: 8, marginBottom: 15 },
+  clubSelector: { backgroundColor: Colors.inputBg, borderWidth: 1, borderColor: Colors.border, padding: 12, borderRadius: 8, marginBottom: 15 },
   clubSelectorText: { color: Colors.textSecondary },
   clubSelectorTextActive: { color: Colors.textPrimary, fontWeight: 'bold' },
   
   footerRow: { flexDirection: 'row', justifyContent: 'space-between', marginTop: 15, paddingHorizontal: 5 },
-  footerBadge: { flex: 0.48, backgroundColor: '#FFF', padding: 10, borderRadius: 8, flexDirection: 'row', alignItems: 'center', gap: 8, elevation: 1 },
+  footerBadge: { flex: 0.48, backgroundColor: Colors.card, padding: 10, borderRadius: 8, flexDirection: 'row', alignItems: 'center', gap: 8, elevation: 1 },
   footerBadgeTitle: { fontSize: 11, fontWeight: 'bold', color: Colors.textPrimary },
   footerBadgeSub: { fontSize: 10, color: Colors.textSecondary },
   
   modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' },
-  modalContent: { backgroundColor: '#FFF', borderTopLeftRadius: 20, borderTopRightRadius: 20, padding: 20, maxHeight: '80%' },
-  modalTitle: { fontSize: 18, fontWeight: 'bold', marginBottom: 15, textAlign: 'center' },
-  modalSearchInput: { backgroundColor: '#F9FAFB', borderWidth: 1, borderColor: Colors.border, borderRadius: 8, paddingHorizontal: 12, paddingVertical: 10, marginBottom: 10, fontSize: 14 },
+  modalContent: { backgroundColor: Colors.card, borderTopLeftRadius: 20, borderTopRightRadius: 20, padding: 20, maxHeight: '80%' },
+  modalTitle: { fontSize: 18, fontWeight: 'bold', marginBottom: 15, textAlign: 'center', color: Colors.textPrimary },
+  modalSearchInput: { backgroundColor: Colors.inputBg, borderWidth: 1, borderColor: Colors.border, borderRadius: 8, paddingHorizontal: 12, paddingVertical: 10, marginBottom: 10, fontSize: 14, color: Colors.textPrimary },
   modalItem: { paddingVertical: 14, borderBottomWidth: 1, borderBottomColor: Colors.border },
   modalItemName: { fontSize: 16, fontWeight: 'bold', color: Colors.textPrimary },
   modalItemRegion: { fontSize: 12, color: Colors.textSecondary },

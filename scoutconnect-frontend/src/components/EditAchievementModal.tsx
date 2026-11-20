@@ -1,7 +1,7 @@
 // src/components/EditAchievementModal.tsx
 import React, { useEffect, useState } from 'react';
 import { Text, TextInput, Alert } from 'react-native';
-import FormSheet, { formStyles } from './FormSheet';
+import FormSheet, { useFormStyles } from './FormSheet';
 import { apiFetch } from '../lib/api';
 
 export interface EditableAchievement {
@@ -17,6 +17,7 @@ interface Props {
 }
 
 export default function EditAchievementModal({ achievement, onClose, onSaved }: Props) {
+  const formStyles = useFormStyles();
   const [title, setTitle] = useState('');
   const [year, setYear] = useState('');
   const [saving, setSaving] = useState(false);
@@ -35,7 +36,7 @@ export default function EditAchievementModal({ achievement, onClose, onSaved }: 
       const data = await apiFetch(`/club/achievements/${achievement.id}`, { method: 'PUT', body: { title, year } });
       onSaved(data.achievement);
     } catch (error: any) {
-      Alert.alert('Could not save changes', error?.message || String(error));
+      Alert.alert('Could not save changes', error?.message || 'Please try again.');
     } finally {
       setSaving(false);
     }

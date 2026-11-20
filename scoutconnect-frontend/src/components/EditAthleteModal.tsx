@@ -1,9 +1,10 @@
 // src/components/EditAthleteModal.tsx
-import React, { useEffect, useState } from 'react';
-import { View, Text, StyleSheet, Modal, TextInput, TouchableOpacity, ScrollView, ActivityIndicator, Alert, KeyboardAvoidingView, Platform, Switch } from 'react-native';
+import React, { useEffect, useState, useMemo } from 'react';
+import ModalBackdrop from './ModalBackdrop';
+import { View, Text, StyleSheet, Modal, TextInput, TouchableOpacity, ScrollView, ActivityIndicator, Alert, KeyboardAvoidingView, Switch } from 'react-native';
 import { apiFetch } from '../lib/api';
-import { Colors } from '../constants/designSystem';
 import { POSITION_CATEGORIES } from '../constants/positions';
+import { useColors, useSheetPad, type ThemeColors } from '../theme/theme';
 
 export interface EditableAthlete {
   id: string;
@@ -24,6 +25,9 @@ interface Props {
 const ALL_POSITIONS = Object.values(POSITION_CATEGORIES).flat();
 
 export default function EditAthleteModal({ athlete, onClose, onSaved }: Props) {
+  const Colors = useColors();
+  const styles = useMemo(() => makeStyles(Colors), [Colors]);
+  const sheetPad = useSheetPad();
   const [form, setForm] = useState({ name: '', dateOfBirth: '', position: '' });
   const [consent, setConsent] = useState(false);
   const [guardian, setGuardian] = useState('');
@@ -68,16 +72,17 @@ export default function EditAthleteModal({ athlete, onClose, onSaved }: Props) {
       });
       onSaved(data.player);
     } catch (error: any) {
-      Alert.alert('Could not save changes', error?.message || String(error));
+      Alert.alert('Could not save changes', error?.message || 'Please try again.');
     } finally {
       setSaving(false);
     }
   };
 
   return (
-    <Modal visible={athlete !== null} animationType="slide" transparent onRequestClose={onClose}>
-      <KeyboardAvoidingView style={styles.overlay} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
-        <View style={styles.content}>
+    <Modal statusBarTranslucent navigationBarTranslucent visible={athlete !== null} animationType="slide" transparent onRequestClose={onClose}>
+      <KeyboardAvoidingView style={styles.overlay} behavior="padding">
+          <ModalBackdrop onPress={() => onClose()} />
+        <View style={[styles.content, sheetPad]}>
           <Text style={styles.title}>Edit Athlete</Text>
           <ScrollView keyboardShouldPersistTaps="handled">
             <Text style={styles.label}>Full Name *</Text>
@@ -128,23 +133,23 @@ export default function EditAthleteModal({ athlete, onClose, onSaved }: Props) {
   );
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (Colors: ThemeColors) => StyleSheet.create({
   overlay: { flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(0,0,0,0.5)' },
-  content: { backgroundColor: '#fff', borderTopLeftRadius: 20, borderTopRightRadius: 20, padding: 20, maxHeight: '90%' },
+  content: { backgroundColor: Colors.card, borderTopLeftRadius: 20, borderTopRightRadius: 20, padding: 20, maxHeight: '90%' },
   title: { fontSize: 18, fontWeight: 'bold', color: Colors.textPrimary, marginBottom: 12 },
   label: { fontSize: 12, fontWeight: 'bold', color: Colors.textSecondary },
-  input: { borderWidth: 1, borderColor: '#D1D5DB', borderRadius: 8, paddingHorizontal: 12, paddingVertical: 10, fontSize: 14, marginTop: 4, marginBottom: 12, color: Colors.textPrimary },
+  input: { borderWidth: 1, borderColor: Colors.borderStrong, borderRadius: 8, paddingHorizontal: 12, paddingVertical: 10, fontSize: 14, marginTop: 4, marginBottom: 12, color: Colors.textPrimary },
   chipRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 6, marginBottom: 12 },
-  chip: { paddingHorizontal: 12, paddingVertical: 8, borderRadius: 16, borderWidth: 1, borderColor: '#D1D5DB' },
+  chip: { paddingHorizontal: 12, paddingVertical: 8, borderRadius: 16, borderWidth: 1, borderColor: Colors.borderStrong },
   chipActive: { backgroundColor: Colors.primary, borderColor: Colors.primary },
   chipText: { fontSize: 12, color: Colors.textPrimary, fontWeight: '600' },
   chipTextActive: { color: '#fff' },
-  consentBox: { backgroundColor: '#F9FAFB', borderRadius: 10, padding: 12, borderWidth: 1, borderColor: '#E5E7EB', marginBottom: 8 },
+  consentBox: { backgroundColor: Colors.inputBg, borderRadius: 10, padding: 12, borderWidth: 1, borderColor: Colors.border, marginBottom: 8 },
   consentRow: { flexDirection: 'row', alignItems: 'center' },
   consentTitle: { fontSize: 14, fontWeight: 'bold', color: Colors.textPrimary },
   consentHint: { fontSize: 12, color: Colors.textSecondary, lineHeight: 17, marginTop: 2 },
   actions: { flexDirection: 'row', gap: 10, marginTop: 8 },
-  cancelBtn: { flex: 1, alignItems: 'center', paddingVertical: 12, borderRadius: 10, borderWidth: 1, borderColor: '#D1D5DB' },
+  cancelBtn: { flex: 1, alignItems: 'center', paddingVertical: 12, borderRadius: 10, borderWidth: 1, borderColor: Colors.borderStrong },
   cancelText: { fontWeight: 'bold', color: Colors.textSecondary },
   saveBtn: { flex: 1.4, alignItems: 'center', paddingVertical: 12, borderRadius: 10, backgroundColor: Colors.primary },
   saveText: { fontWeight: 'bold', color: '#fff' },

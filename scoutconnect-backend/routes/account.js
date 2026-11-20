@@ -1,7 +1,10 @@
 // routes/account.js
 // The signed-in account: its details and its editable profile.
 const express = require('express');
-const { ScoutProfile } = require('../models');
+const models = require('../models');
+const { sequelize, ScoutProfile } = models;
+const { SUPABASE_URL } = require('../config/supabase');
+const { createAccountDeleter } = require('../services/accountDeletion');
 const { normaliseName } = require('../lib/profile');
 const { authenticateToken } = require('../middleware/auth');
 
@@ -46,6 +49,21 @@ router.put('/profile', authenticateToken, async (req, res) => {
   } catch (error) {
     console.error('Profile update error:', error);
     res.status(500).json({ error: 'Failed to update profile.' });
+  }
+});
+
+// Delete the signed-in user's own account (see services/accountDeletion.js for what goes and what stays).
+router.delete('/account', authenticateToken, async (req, res) => {
+  const deleter = createAccountDeleter({
+    sequelize, models, supabaseUrl: SUPABASE_URL, serviceKey: process.env.SUPABASE_SERVICE_ROLE_KEY
+  });
+  try {
+    const result = await deleter.deleteAccount(req.user, req.body?.confirm);
+    if (!result.ok) return res.status(result.status).json({ error: result.error, code: result.code });
+    res.status(200).json({ message: 'Your account has been deleted.' });
+  } catch (error) {
+    console.error('Account deletion error:', error);
+    res.status(500).json({ error: 'Could not delete your account. Nothing was removed.' });
   }
 });
 

@@ -145,7 +145,7 @@ const ContactRequest = sequelize.define('ContactRequest', {
   playerId: { type: DataTypes.UUID, allowNull: false },
   clubId: { type: DataTypes.UUID, allowNull: false },
   message: { type: DataTypes.TEXT, allowNull: false },
-  status: { type: DataTypes.STRING, defaultValue: 'Pending' }, // Pending | Accepted | Declined
+  status: { type: DataTypes.STRING, defaultValue: 'Pending' }, // Pending | Accepted | Declined | Withdrawn
   responseNote: { type: DataTypes.TEXT },
   respondedBy: { type: DataTypes.STRING },
   respondedAt: { type: DataTypes.DATE }

@@ -1,12 +1,12 @@
 // src/components/DocumentAttachments.tsx
-import React from 'react';
+import React, { useMemo } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, Alert, Image } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
 import * as DocumentPicker from 'expo-document-picker';
 import { Ionicons } from '@expo/vector-icons';
-import { formStyles } from './FormSheet';
+import { useFormStyles } from './FormSheet';
 import { ALLOWED_MIME_TYPES, Attachment, DOC_TYPES, DocType, MAX_FILE_BYTES, isPdf, withExtension } from '../lib/verification';
-import { Colors } from '../constants/designSystem';
+import { useColors, type ThemeColors } from '../theme/theme';
 
 const MAX_MB = MAX_FILE_BYTES / 1024 / 1024;
 
@@ -18,6 +18,9 @@ interface Props {
 
 /** Pick, label and remove supporting documents (photos, PDFs). Upload happens later, on submit. */
 export default function DocumentAttachments({ attachments, onChange, maxFiles = 5 }: Props) {
+  const formStyles = useFormStyles();
+  const Colors = useColors();
+  const styles = useMemo(() => makeStyles(Colors), [Colors]);
   const remaining = maxFiles - attachments.length;
 
   const warnTooBig = (count: number, noun: string) =>
@@ -88,7 +91,7 @@ export default function DocumentAttachments({ attachments, onChange, maxFiles = 
           <View style={styles.attachmentTop}>
             {isPdf(attachment.fileName) ? (
               <View style={[styles.thumb, styles.pdfThumb]}>
-                <Ionicons name="document-text" size={24} color="#B91C1C" />
+                <Ionicons name="document-text" size={24} color={Colors.dangerText} />
                 <Text style={styles.pdfLabel}>PDF</Text>
               </View>
             ) : (
@@ -129,15 +132,15 @@ export default function DocumentAttachments({ attachments, onChange, maxFiles = 
   );
 }
 
-const styles = StyleSheet.create({
-  attachment: { borderWidth: 1, borderColor: '#E5E7EB', borderRadius: 10, padding: 10, marginTop: 8 },
+const makeStyles = (Colors: ThemeColors) => StyleSheet.create({
+  attachment: { borderWidth: 1, borderColor: Colors.border, borderRadius: 10, padding: 10, marginTop: 8 },
   attachmentTop: { flexDirection: 'row', alignItems: 'center', gap: 10 },
-  thumb: { width: 44, height: 44, borderRadius: 6, backgroundColor: '#EEE' },
-  pdfThumb: { alignItems: 'center', justifyContent: 'center', backgroundColor: '#FEF2F2' },
-  pdfLabel: { fontSize: 8, fontWeight: 'bold', color: '#B91C1C' },
+  thumb: { width: 44, height: 44, borderRadius: 6, backgroundColor: Colors.surfaceMuted },
+  pdfThumb: { alignItems: 'center', justifyContent: 'center', backgroundColor: Colors.dangerBg },
+  pdfLabel: { fontSize: 8, fontWeight: 'bold', color: Colors.dangerText },
   attachmentName: { flex: 1, fontSize: 13, color: Colors.textPrimary },
   chipRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 8 },
-  chip: { paddingHorizontal: 10, paddingVertical: 6, borderRadius: 14, borderWidth: 1, borderColor: '#D1D5DB' },
+  chip: { paddingHorizontal: 10, paddingVertical: 6, borderRadius: 14, borderWidth: 1, borderColor: Colors.borderStrong },
   chipActive: { backgroundColor: Colors.primary, borderColor: Colors.primary },
   chipText: { fontSize: 11, fontWeight: '600', color: Colors.textPrimary },
   chipTextActive: { color: '#fff' },

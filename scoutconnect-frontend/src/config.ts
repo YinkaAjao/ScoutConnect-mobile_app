@@ -1,6 +1,7 @@
 // src/config.ts
 export { API_BASE } from './constants/designSystem';
 import { API_BASE } from './constants/designSystem';
+import { friendlyStatusMessage } from './lib/api';
 
 /**
  * Safe fetch wrapper that prevents JSON Parse crashes ('<' HTML errors)
@@ -14,13 +15,12 @@ export async function safeFetchJson(url: string, options?: RequestInit) {
   try {
     data = JSON.parse(text);
   } catch (err) {
-    throw new Error(
-      `Server returned HTML instead of JSON (Status ${response.status}) from ${url}. Check if Render is waking up or if the URL path is correct.`
-    );
+    console.warn(`Non-JSON response (status ${response.status}) from ${url}`);
+    throw new Error('The server is not responding properly. It may be waking up, so please try again in a moment.');
   }
 
   if (!response.ok) {
-    throw new Error(data?.error || `Request failed with status ${response.status}`);
+    throw new Error(data?.error || friendlyStatusMessage(response.status));
   }
 
   return data;

@@ -30,6 +30,25 @@ interface ApiOptions {
 
 // 502/503/504 and Cloudflare's 522/523/524 are what a cold or restarting Render instance returns.
 const RETRYABLE_STATUS = new Set([502, 503, 504, 522, 523, 524]);
+
+/** Plain-English message for an error response that carried no message of its own. */
+export function friendlyStatusMessage(status: number): string {
+  if (RETRYABLE_STATUS.has(status)) return 'The server is not responding. Please try again in a moment.';
+  switch (status) {
+    case 400: return 'Something in that request was not valid. Please check your details and try again.';
+    case 401: return 'Your session has expired. Please sign in again.';
+    case 403: return 'You do not have permission to do that.';
+    case 404: return 'We could not find what you asked for. It may have been removed, or the app may need updating. Please refresh and try again.';
+    case 409: return 'That action conflicts with the current state. Please refresh and try again.';
+    case 413: return 'That file is too large. Please choose a smaller one.';
+    case 429: return 'Too many attempts. Please wait a few minutes and try again.';
+    default:
+      return status >= 500
+        ? 'Something went wrong on our side. Please try again shortly.'
+        : 'Something went wrong. Please try again.';
+  }
+}
+
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 /**
@@ -77,7 +96,7 @@ export async function apiFetch<T = any>(path: string, options: ApiOptions = {}):
         continue;
       }
       throw new ApiError(
-        data?.error || (RETRYABLE_STATUS.has(response.status) ? 'The server is not responding. Please try again shortly.' : `Request failed (${response.status})`),
+        data?.error || friendlyStatusMessage(response.status),
         response.status,
         data?.code,
         data
@@ -98,5 +117,5 @@ export async function apiFetch<T = any>(path: string, options: ApiOptions = {}):
       clearTimeout(timer);
     }
   }
-  throw lastError instanceof Error ? lastError : new ApiError('Request failed.', 0);
+  throw lastError instanceof Error ? lastError : new ApiError('Something went wrong. Please try again.', 0);
 }
