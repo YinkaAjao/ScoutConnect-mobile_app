@@ -87,6 +87,13 @@ export default function AuthScreen() {
   // Admins are flagged in the account's app_metadata, which users cannot edit; the server re-checks it on every call.
   const isAdminUser = (user?: { app_metadata?: Record<string, any> } | null) => user?.app_metadata?.role === 'admin';
 
+  // The role chosen at sign-up is stored on the account. The toggle on this screen must match it, otherwise a coach
+  // could open the scout screens (the server would still refuse their data, but the app should not let them in).
+  const registeredRole = (user?: { user_metadata?: Record<string, any> } | null): 'Coach' | 'Scout' | null => {
+    const r = user?.user_metadata?.role;
+    return r === 'Coach' || r === 'Scout' ? r : null;
+  };
+
   const checkExistingSession = async () => {
     try {
       const { data: { session } } = await supabase.auth.getSession();
@@ -96,7 +103,9 @@ export default function AuthScreen() {
           return;
         }
         await SecureStore.setItemAsync('userToken', session.access_token);
-        const savedRole = await SecureStore.getItemAsync('userRole');
+        const actualRole = registeredRole(session.user);
+        const savedRole = actualRole ?? (await SecureStore.getItemAsync('userRole'));
+        if (actualRole) await SecureStore.setItemAsync('userRole', actualRole);
         if (savedRole === 'Coach') router.replace('/coach');
         else if (savedRole === 'Scout') router.replace('/scout');
       }
@@ -222,6 +231,15 @@ export default function AuthScreen() {
               router.replace('/admin' as Href);
               return;
             }
+            const googleActualRole = registeredRole(googleUser);
+            if (googleActualRole && googleActualRole !== role) {
+              await supabase.auth.signOut();
+              Alert.alert(
+                `This is a ${googleActualRole} account`,
+                `This Google account is registered as a ${googleActualRole.toLowerCase()}. Switch the toggle to "${googleActualRole}" and continue with Google again.`
+              );
+              return;
+            }
             if (!googleUser.user_metadata?.role) {
               // A first-time coach must name an academy, as in the email form; otherwise the server cannot build the profile.
               if (role === 'Coach' && !selectedClub && !newClubName.trim()) {
@@ -270,6 +288,16 @@ export default function AuthScreen() {
 
         if (isAdminUser(data.user)) {
           router.replace('/admin' as Href);
+          return;
+        }
+
+        const actualRole = registeredRole(data.user);
+        if (actualRole && actualRole !== role) {
+          await supabase.auth.signOut();
+          Alert.alert(
+            `This is a ${actualRole} account`,
+            `These details belong to a ${actualRole.toLowerCase()} account. Switch the toggle above to "${actualRole}" and sign in again.`
+          );
           return;
         }
 
